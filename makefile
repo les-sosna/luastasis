@@ -106,8 +106,12 @@ LUA_T=	lua
 LUA_O=	lua.o
 
 
-ALL_T= $(CORE_T) $(LUA_T)
-ALL_O= $(CORE_O) $(LUA_O) $(AUX_O) $(LIB_O)
+SER_O=  lstate_serial.o
+TEST_SERIAL_T= test_serial
+TEST_SERIAL_O= test_serial.o
+
+ALL_T= $(CORE_T) $(LUA_T) $(TEST_SERIAL_T)
+ALL_O= $(CORE_O) $(LUA_O) $(AUX_O) $(LIB_O) $(SER_O) $(TEST_SERIAL_O)
 ALL_A= $(CORE_T)
 
 all:	$(ALL_T)
@@ -124,6 +128,8 @@ $(CORE_T): $(CORE_O) $(AUX_O) $(LIB_O)
 $(LUA_T): $(LUA_O) $(CORE_T)
 	$(CC) -o $@ $(MYLDFLAGS) $(LUA_O) $(CORE_T) $(LIBS) $(MYLIBS) $(DL)
 
+$(TEST_SERIAL_T): $(TEST_SERIAL_O) $(SER_O) $(CORE_T)
+	$(CC) -o $@ $(MYLDFLAGS) $(TEST_SERIAL_O) $(SER_O) $(CORE_T) $(LIBS) $(MYLIBS) $(DL)
 
 clean:
 	$(RM) $(ALL_T) $(ALL_O)
