@@ -5,6 +5,7 @@
 **   make test_serial && ./test_serial
 */
 
+#define _GNU_SOURCE   /* open_memstream */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +14,7 @@
 #include "lualib.h"
 #include "lauxlib.h"
 #include "lstate_serial.h"
+#include "luaser_tojson.h"
 
 /* -----------------------------------------------------------------------
 ** Standard library registry (used for C function serialization)
@@ -711,6 +713,68 @@ static void test_save_preserves_state(void) {
 }
 
 /* -----------------------------------------------------------------------
+** Test 14 – JSON output of an empty (no libs) state matches golden
+** --------------------------------------------------------------------- */
+static const char GOLDEN_EMPTY_STATE[] =
+  "{\n"
+  "  \"format\": \"luaser\",\n"
+  "  \"num_objects\": 3,\n"
+  "  \"roots\": {\n"
+  "    \"registry\": 1,\n"
+  "    \"main_thread\": 2,\n"
+  "    \"type_metatables\": [null,null,null,null,null,null,null,null,null]\n"
+  "  },\n"
+  "  \"objects\": {\n"
+  "    \"1\": {\"type\":\"table\", \"entry_count\":3, \"entries\":[\n"
+  "        {\"key\":{\"int\":1}, \"val\":{\"bool\":false}},\n"
+  "        {\"key\":{\"int\":2}, \"val\":{\"ref\":3}},\n"
+  "        {\"key\":{\"int\":3}, \"val\":{\"ref\":2}}\n"
+  "      ], \"metatable\":null, \"asize\":3\n"
+  "    },\n"
+  "    \"2\": {\"type\":\"thread\", \"status\":0, \"status_name\":\"ok\","
+          " \"stack_size\":1, \"stack\":[\n"
+  "        null\n"
+  "      ], \"num_callinfos\":1, \"callinfos\":[\n"
+  "        {\"is_lua\":false, \"func_slot\":0, \"top_slot\":21,"
+          " \"callstatus\":32768}\n"
+  "      ], \"open_upvalues\":[]\n"
+  "    },\n"
+  "    \"3\": {\"type\":\"table\", \"entry_count\":0, \"entries\":[],"
+          " \"metatable\":null, \"asize\":0\n"
+  "    }\n"
+  "  }\n"
+  "}\n"
+;
+
+static void test_json_empty_state(void) {
+  printf("== test_json_empty_state ==\n");
+
+  lua_State *L = luaL_newstate();
+
+  unsigned char *buf = NULL;
+  size_t sz = 0;
+  int rc = luaser_save(L, NULL, &buf, &sz);
+  CHECK(rc == 0, "save empty state", "rc=%d", rc);
+
+  char  *json = NULL;
+  size_t jsz  = 0;
+  FILE  *fp   = open_memstream(&json, &jsz);
+  CHECK(fp != NULL, "open_memstream", "fp=NULL");
+
+  int jrc = luaser_tojson(buf, sz, fp);
+  fclose(fp);
+  CHECK(jrc == 0, "luaser_tojson succeeds", "jrc=%d", jrc);
+
+  CHECK(json != NULL && strcmp(json, GOLDEN_EMPTY_STATE) == 0,
+        "json matches golden",
+        "got:\n%s\nexpected:\n%s", json ? json : "(null)", GOLDEN_EMPTY_STATE);
+
+  free(json);
+  free(buf);
+  lua_close(L);
+}
+
+/* -----------------------------------------------------------------------
 ** main
 ** --------------------------------------------------------------------- */
 int main(void) {
@@ -729,6 +793,7 @@ int main(void) {
   test_cfunc();
   test_vararg();
   test_save_preserves_state();
+  test_json_empty_state();
   printf("=== Done ===\n");
   return 0;
 }

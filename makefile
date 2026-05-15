@@ -111,9 +111,10 @@ TEST_SERIAL_T= test_serial
 TEST_SERIAL_O= test_serial.o
 JSON_T= luaser_tojson
 JSON_O= luaser_tojson.o
+JSON_MAIN_O= luaser_tojson_main.o
 
 ALL_T= $(CORE_T) $(LUA_T) $(TEST_SERIAL_T) $(JSON_T)
-ALL_O= $(CORE_O) $(LUA_O) $(AUX_O) $(LIB_O) $(SER_O) $(TEST_SERIAL_O) $(JSON_O)
+ALL_O= $(CORE_O) $(LUA_O) $(AUX_O) $(LIB_O) $(SER_O) $(TEST_SERIAL_O) $(JSON_O) $(JSON_MAIN_O)
 ALL_A= $(CORE_T)
 
 all:	$(ALL_T)
@@ -130,11 +131,11 @@ $(CORE_T): $(CORE_O) $(AUX_O) $(LIB_O)
 $(LUA_T): $(LUA_O) $(CORE_T)
 	$(CC) -o $@ $(MYLDFLAGS) $(LUA_O) $(CORE_T) $(LIBS) $(MYLIBS) $(DL)
 
-$(TEST_SERIAL_T): $(TEST_SERIAL_O) $(SER_O) $(CORE_T)
-	$(CC) -o $@ $(MYLDFLAGS) $(TEST_SERIAL_O) $(SER_O) $(CORE_T) $(LIBS) $(MYLIBS) $(DL)
+$(TEST_SERIAL_T): $(TEST_SERIAL_O) $(SER_O) $(JSON_O) $(CORE_T)
+	$(CC) -o $@ $(MYLDFLAGS) $(TEST_SERIAL_O) $(SER_O) $(JSON_O) $(CORE_T) $(LIBS) $(MYLIBS) $(DL)
 
-$(JSON_T): $(JSON_O)
-	$(CC) -o $@ $(JSON_O) -lm
+$(JSON_T): $(JSON_O) $(JSON_MAIN_O)
+	$(CC) -o $@ $(JSON_O) $(JSON_MAIN_O) -lm
 
 clean:
 	$(RM) $(ALL_T) $(ALL_O)
