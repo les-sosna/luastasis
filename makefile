@@ -109,9 +109,11 @@ LUA_O=	lua.o
 SER_O=  lstate_serial.o
 TEST_SERIAL_T= test_serial
 TEST_SERIAL_O= test_serial.o
+JSON_T= luaser_tojson
+JSON_O= luaser_tojson.o
 
-ALL_T= $(CORE_T) $(LUA_T) $(TEST_SERIAL_T)
-ALL_O= $(CORE_O) $(LUA_O) $(AUX_O) $(LIB_O) $(SER_O) $(TEST_SERIAL_O)
+ALL_T= $(CORE_T) $(LUA_T) $(TEST_SERIAL_T) $(JSON_T)
+ALL_O= $(CORE_O) $(LUA_O) $(AUX_O) $(LIB_O) $(SER_O) $(TEST_SERIAL_O) $(JSON_O)
 ALL_A= $(CORE_T)
 
 all:	$(ALL_T)
@@ -130,6 +132,9 @@ $(LUA_T): $(LUA_O) $(CORE_T)
 
 $(TEST_SERIAL_T): $(TEST_SERIAL_O) $(SER_O) $(CORE_T)
 	$(CC) -o $@ $(MYLDFLAGS) $(TEST_SERIAL_O) $(SER_O) $(CORE_T) $(LIBS) $(MYLIBS) $(DL)
+
+$(JSON_T): $(JSON_O)
+	$(CC) -o $@ $(JSON_O) -lm
 
 clean:
 	$(RM) $(ALL_T) $(ALL_O)
