@@ -22,6 +22,23 @@
 #include "lstate_serial.h"
 
 /* -----------------------------------------------------------------------
+** Standard library registry (used for C function serialization)
+** --------------------------------------------------------------------- */
+static const luaser_Lib std_libs[] = {
+  {"base",      luaopen_base},
+  {"package",   luaopen_package},
+  {"coroutine", luaopen_coroutine},
+  {"table",     luaopen_table},
+  {"string",    luaopen_string},
+  {"math",      luaopen_math},
+  {"io",        luaopen_io},
+  {"os",        luaopen_os},
+  {"utf8",      luaopen_utf8},
+  {"debug",     luaopen_debug},
+  {NULL, NULL}
+};
+
+/* -----------------------------------------------------------------------
 ** Helpers
 ** --------------------------------------------------------------------- */
 
@@ -42,18 +59,19 @@ static int run(lua_State *L, const char *code) {
 
 /* Execute code, save, reload, return the reloaded state.
    Caller owns the returned state and must lua_close() it. */
-static lua_State *save_reload(lua_State *L, const char *setup_code) {
+static lua_State *save_reload(lua_State *L, const char *setup_code,
+                              const luaser_Lib *libs) {
   if (setup_code) {
     int r = run(L, setup_code);
     if (r != LUA_OK) return NULL;
   }
   unsigned char *buf = NULL;
   size_t sz = 0;
-  if (luaser_save(L, &buf, &sz) != 0) {
+  if (luaser_save(L, libs, &buf, &sz) != 0) {
     fprintf(stderr, "save failed\n");
     return NULL;
   }
-  lua_State *L2 = luaser_load(buf, sz);
+  lua_State *L2 = luaser_load(buf, sz, libs);
   free(buf);
   return L2;
 }
@@ -82,7 +100,8 @@ static void test_basic(void) {
     "b_true  = true\n"
     "b_false = false\n"
     "s_hello = 'hello'\n"
-    "n_nil   = nil\n"
+    "n_nil   = nil\n",
+    std_libs
   );
   lua_close(L);
 
@@ -129,12 +148,12 @@ static void test_table(void) {
   lua_State *L2 = save_reload(L,
     "arr = {10, 20, 30}\n"
     "t   = { x=1, y=2, z='three' }\n"
-    "nested = { inner = { val = 99 } }\n"
+    "nested = { inner = { val = 99 } }\n",
+    std_libs
   );
   lua_close(L);
   if (!L2) { FAIL("reload", "NULL"); return; }
 
-  /* array */
   get_global(L2, "arr");
   lua_rawgeti(L2, -1, 1);
   CHECK(lua_tointeger(L2,-1)==10, "arr[1]=10", "got %lld",(long long)lua_tointeger(L2,-1));
@@ -143,13 +162,11 @@ static void test_table(void) {
   CHECK(lua_tointeger(L2,-1)==30, "arr[3]=30", "got %lld",(long long)lua_tointeger(L2,-1));
   lua_pop(L2, 2);
 
-  /* hash */
   get_global(L2, "t");
   lua_getfield(L2, -1, "z");
   CHECK(strcmp(lua_tostring(L2,-1),"three")==0, "t.z='three'", "got '%s'",lua_tostring(L2,-1));
   lua_pop(L2, 2);
 
-  /* nested */
   get_global(L2, "nested");
   lua_getfield(L2, -1, "inner");
   lua_getfield(L2, -1, "val");
@@ -168,7 +185,8 @@ static void test_cycle(void) {
   lua_State *L2 = save_reload(L,
     "t = {}\n"
     "t.self = t\n"
-    "t.val  = 777\n"
+    "t.val  = 777\n",
+    std_libs
   );
   lua_close(L);
   if (!L2) { FAIL("reload", "NULL"); return; }
@@ -177,7 +195,6 @@ static void test_cycle(void) {
   lua_getfield(L2, -1, "val");
   CHECK(lua_tointeger(L2,-1)==777, "t.val=777","got %lld",(long long)lua_tointeger(L2,-1));
   lua_pop(L2, 1);
-  /* t.self should be the same table */
   lua_getfield(L2, -1, "self");
   CHECK(lua_rawequal(L2,-1,-2), "t.self==t", "not same table");
   lua_pop(L2, 2);
@@ -198,14 +215,15 @@ static void test_closure_upvalue(void) {
     "end\n"
     "counter = make_counter(10)\n"
     "counter()  -- c=11\n"
-    "counter()  -- c=12\n"
+    "counter()  -- c=12\n",
+    std_libs
   );
   lua_close(L);
   if (!L2) { FAIL("reload", "NULL"); return; }
 
   get_global(L2, "counter");
   CHECK(lua_type(L2,-1)==LUA_TFUNCTION, "counter is function","type=%d",lua_type(L2,-1));
-  lua_call(L2, 0, 1); /* should return 13 */
+  lua_call(L2, 0, 1);
   CHECK(lua_tointeger(L2,-1)==13, "counter()=13 after reload","got %lld",(long long)lua_tointeger(L2,-1));
   lua_pop(L2, 1);
 
@@ -224,7 +242,8 @@ static void test_shared_upvalue(void) {
     "  inc = function() shared = shared + 1 end\n"
     "  get = function() return shared end\n"
     "end\n"
-    "inc(); inc(); inc()\n"   /* shared == 3 */
+    "inc(); inc(); inc()\n",
+    std_libs
   );
   lua_close(L);
   if (!L2) { FAIL("reload", "NULL"); return; }
@@ -234,7 +253,6 @@ static void test_shared_upvalue(void) {
   CHECK(lua_tointeger(L2,-1)==3, "shared=3 before inc","got %lld",(long long)lua_tointeger(L2,-1));
   lua_pop(L2, 1);
 
-  /* call inc, then get again – should update the SAME upvalue */
   get_global(L2, "inc"); lua_call(L2, 0, 0);
   get_global(L2, "get"); lua_call(L2, 0, 1);
   CHECK(lua_tointeger(L2,-1)==4, "shared=4 after inc","got %lld",(long long)lua_tointeger(L2,-1));
@@ -250,7 +268,8 @@ static void test_long_string(void) {
   printf("== test_long_string ==\n");
   lua_State *L = new_state();
   lua_State *L2 = save_reload(L,
-    "long_s = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEF_END'\n"
+    "long_s = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEF_END'\n",
+    std_libs
   );
   lua_close(L);
   if (!L2) { FAIL("reload", "NULL"); return; }
@@ -269,7 +288,6 @@ static void test_long_string(void) {
 static void test_coroutine(void) {
   printf("== test_coroutine ==\n");
   lua_State *L = new_state();
-  /* create a generator coroutine, advance it twice */
   int r = run(L,
     "function gen(n)\n"
     "  for i = 1, n do\n"
@@ -283,21 +301,14 @@ static void test_coroutine(void) {
   );
   if (r != LUA_OK) { FAIL("setup", "lua error"); return; }
 
-  /* verify state before save */
   lua_getglobal(L, "v2");
   long long v2_before = lua_tointeger(L, -1);
   lua_pop(L, 1);
 
-  lua_State *L2 = save_reload(L, NULL);
+  lua_State *L2 = save_reload(L, NULL, std_libs);
   lua_close(L);
   if (!L2) { FAIL("reload", "NULL"); return; }
 
-  /* C closures aren't serialized; re-register coroutine lib so yield works */
-  lua_pushcfunction(L2, luaopen_coroutine);
-  lua_call(L2, 0, 1);
-  lua_setglobal(L2, "coroutine");
-
-  /* verify v1, v2 survived */
   get_global(L2, "v1");
   CHECK(lua_tointeger(L2,-1)==1, "v1=1 after reload","got %lld",(long long)lua_tointeger(L2,-1));
   lua_pop(L2, 1);
@@ -307,7 +318,6 @@ static void test_coroutine(void) {
         "v2=2 after reload","got %lld",(long long)lua_tointeger(L2,-1));
   lua_pop(L2, 1);
 
-  /* resume the coroutine – should yield 3 */
   get_global(L2, "co");
   CHECK(lua_type(L2,-1)==LUA_TTHREAD, "co is thread","type=%d",lua_type(L2,-1));
   lua_State *co = lua_tothread(L2, -1);
@@ -322,7 +332,6 @@ static void test_coroutine(void) {
     lua_pop(co, nres);
   }
 
-  /* run to completion */
   while ((status = lua_resume(co, L2, 0, &nres)) == LUA_YIELD)
     lua_pop(co, nres);
   CHECK(status == LUA_OK, "coroutine finished","status=%d",status);
@@ -355,20 +364,18 @@ static void test_stack_restored(void) {
     "  return 'done'\n"
     "end\n"
     "co = coroutine.create(gen)\n"
-    "coroutine.resume(co, 5)\n"   /* yields at i=1 */
-    "coroutine.resume(co)\n"      /* yields at i=2 */
+    "coroutine.resume(co, 5)\n"
+    "coroutine.resume(co)\n"
   );
   if (r != LUA_OK) { FAIL("setup", "lua error"); return; }
 
-  /* get internal lua_State of the coroutine */
   lua_getglobal(L, "co");
   lua_State *co = lua_tothread(L, -1);
   lua_pop(L, 1);
 
-  /* snapshot before save */
   int ns = (int)(co->top.p - co->stack.p);
   int snap_n = ns < MAX_SNAP ? ns : MAX_SNAP;
-  int     tags[MAX_SNAP];
+  int        tags[MAX_SNAP];
   lua_Integer ivals[MAX_SNAP];
   lua_Number  nvals[MAX_SNAP];
   for (int i = 0; i < snap_n; i++) {
@@ -378,14 +385,9 @@ static void test_stack_restored(void) {
     nvals[i]    = ttisfloat(v)   ? fltvalue(v) : 0;
   }
 
-  lua_State *L2 = save_reload(L, NULL);
+  lua_State *L2 = save_reload(L, NULL, std_libs);
   lua_close(L);
   if (!L2) { FAIL("reload", "NULL"); return; }
-
-  /* re-register coroutine lib (C closures not serialized) */
-  lua_pushcfunction(L2, luaopen_coroutine);
-  lua_call(L2, 0, 1);
-  lua_setglobal(L2, "coroutine");
 
   lua_getglobal(L2, "co");
   lua_State *co2 = lua_tothread(L2, -1);
@@ -397,19 +399,13 @@ static void test_stack_restored(void) {
   int check_n = ns < ns2 ? ns : ns2;
   check_n = check_n < snap_n ? check_n : snap_n;
 
-  /* C functions (LCF, CCL) can't be serialized; they become nil.
-  ** All other types (int, float, bool, nil, Lua closures, strings, tables)
-  ** must be preserved exactly. */
   int tags_ok = 1, ints_ok = 1, floats_ok = 1;
   for (int i = 0; i < check_n; i++) {
-    TValue *v    = s2v(co2->stack.p + i);
-    int tag2     = (int)rawtt(v);
-    int is_cfn   = (novariant(tags[i]) == LUA_TFUNCTION && tags[i] != ctb(LUA_VLCL));
-    int exp_tag  = is_cfn ? LUA_VNIL : tags[i];
-    if (tag2 != exp_tag) {
-      fprintf(stdout, "  FAIL: slot[%d] type tag — before=%d expected=%d after=%d%s\n",
-              i, tags[i], exp_tag, tag2,
-              is_cfn ? " (C fn→nil expected)" : "");
+    TValue *v = s2v(co2->stack.p + i);
+    int tag2  = (int)rawtt(v);
+    if (tag2 != tags[i]) {
+      fprintf(stdout, "  FAIL: slot[%d] type tag — before=%d after=%d\n",
+              i, tags[i], tag2);
       tags_ok = 0;
     }
     if (ttisinteger(v) && ivalue(v) != ivals[i]) {
@@ -423,7 +419,7 @@ static void test_stack_restored(void) {
       floats_ok = 0;
     }
   }
-  if (tags_ok)   PASS("all slot type tags preserved (C fns become nil)");
+  if (tags_ok)   PASS("all slot type tags preserved");
   if (ints_ok)   PASS("all integer slot values preserved");
   if (floats_ok) PASS("all float slot values preserved");
 
@@ -440,7 +436,8 @@ static void test_recursive_closure(void) {
     "function fib(n)\n"
     "  if n <= 1 then return n end\n"
     "  return fib(n-1) + fib(n-2)\n"
-    "end\n"
+    "end\n",
+    std_libs
   );
   lua_close(L);
   if (!L2) { FAIL("reload", "NULL"); return; }
@@ -459,16 +456,14 @@ static void test_recursive_closure(void) {
 static void test_globals_env(void) {
   printf("== test_globals_env ==\n");
   lua_State *L = new_state();
-  lua_State *L2 = save_reload(L, "magic = 12345");
+  lua_State *L2 = save_reload(L, "magic = 12345", std_libs);
   lua_close(L);
   if (!L2) { FAIL("reload", "NULL"); return; }
 
-  /* _G should be a table */
   lua_getglobal(L2, "_G");
   CHECK(lua_type(L2,-1)==LUA_TTABLE, "_G is table","type=%d",lua_type(L2,-1));
   lua_pop(L2, 1);
 
-  /* can still set and get globals */
   lua_pushinteger(L2, 99);
   lua_setglobal(L2, "new_var");
   get_global(L2, "new_var");
@@ -493,7 +488,8 @@ static void test_mixed_keys(void) {
     "m[1]    = 'one'\n"
     "m[2]    = 'two'\n"
     "m['k']  = 3.5\n"
-    "m[true] = 'yes'\n"
+    "m[true] = 'yes'\n",
+    std_libs
   );
   lua_close(L);
   if (!L2) { FAIL("reload", "NULL"); return; }
@@ -515,6 +511,86 @@ static void test_mixed_keys(void) {
 }
 
 /* -----------------------------------------------------------------------
+** Test 11 – C function serialization
+** C functions stored as globals / table values survive round-trip and
+** remain callable.
+** --------------------------------------------------------------------- */
+static void test_cfunc(void) {
+  printf("== test_cfunc ==\n");
+  lua_State *L = new_state();
+
+  /* Save table.sort as a global; use table.concat to build a string. */
+  int r = run(L,
+    "local t = {3, 1, 4, 1, 5, 9, 2, 6}\n"
+    "sort_fn = table.sort\n"
+    "sort_fn(t)\n"
+    "sorted_str = table.concat(t, ',')\n"
+    "concat_fn = table.concat\n"
+  );
+  if (r != LUA_OK) { FAIL("setup", "lua error"); return; }
+
+  lua_State *L2 = save_reload(L, NULL, std_libs);
+  lua_close(L);
+  if (!L2) { FAIL("reload", "NULL"); return; }
+
+  /* sorted_str should have been computed before save */
+  get_global(L2, "sorted_str");
+  CHECK(lua_type(L2,-1) == LUA_TSTRING, "sorted_str is string",
+        "type=%d", lua_type(L2,-1));
+  CHECK(strcmp(lua_tostring(L2,-1), "1,1,2,3,4,5,6,9") == 0,
+        "sorted_str='1,1,2,3,4,5,6,9'", "got '%s'", lua_tostring(L2,-1));
+  lua_pop(L2, 1);
+
+  /* sort_fn should be restored as a callable C function */
+  get_global(L2, "sort_fn");
+  CHECK(lua_type(L2,-1) == LUA_TFUNCTION, "sort_fn is function",
+        "type=%d", lua_type(L2,-1));
+  lua_pop(L2, 1);
+
+  /* concat_fn should also be restored and callable */
+  get_global(L2, "concat_fn");
+  CHECK(lua_type(L2,-1) == LUA_TFUNCTION, "concat_fn is function",
+        "type=%d", lua_type(L2,-1));
+  /* call concat_fn({10,20,30}, '-') */
+  lua_newtable(L2);
+  lua_pushinteger(L2, 10); lua_rawseti(L2, -2, 1);
+  lua_pushinteger(L2, 20); lua_rawseti(L2, -2, 2);
+  lua_pushinteger(L2, 30); lua_rawseti(L2, -2, 3);
+  lua_pushstring(L2, "-");
+  lua_call(L2, 2, 1);
+  CHECK(strcmp(lua_tostring(L2,-1), "10-20-30") == 0,
+        "concat_fn({10,20,30},'-')='10-20-30'",
+        "got '%s'", lua_tostring(L2,-1));
+  lua_pop(L2, 1);
+
+  /* Coroutine functions should work without manual re-registration */
+  r = luaL_dostring(L2,
+    "local co = coroutine.create(function()\n"
+    "  coroutine.yield(42)\n"
+    "  coroutine.yield(99)\n"
+    "end)\n"
+    "local ok, a = coroutine.resume(co)\n"
+    "local ok2, b = coroutine.resume(co)\n"
+    "cfunc_co_a = a\n"
+    "cfunc_co_b = b\n"
+  );
+  CHECK(r == LUA_OK, "coroutine code runs after reload",
+        "error: %s", lua_tostring(L2, -1));
+  if (r == LUA_OK) {
+    get_global(L2, "cfunc_co_a");
+    CHECK(lua_tointeger(L2,-1)==42, "first yield=42",
+          "got %lld",(long long)lua_tointeger(L2,-1));
+    lua_pop(L2, 1);
+    get_global(L2, "cfunc_co_b");
+    CHECK(lua_tointeger(L2,-1)==99, "second yield=99",
+          "got %lld",(long long)lua_tointeger(L2,-1));
+    lua_pop(L2, 1);
+  }
+
+  lua_close(L2);
+}
+
+/* -----------------------------------------------------------------------
 ** main
 ** --------------------------------------------------------------------- */
 int main(void) {
@@ -530,6 +606,7 @@ int main(void) {
   test_recursive_closure();
   test_globals_env();
   test_mixed_keys();
+  test_cfunc();
   printf("=== Done ===\n");
   return 0;
 }
