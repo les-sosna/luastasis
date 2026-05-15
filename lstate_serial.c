@@ -36,9 +36,12 @@
 #define OBJ_UPVAL_CLOSED 5
 #define OBJ_UPVAL_OPEN   6   /* placeholder; data lives in owning thread */
 #define OBJ_THREAD       7
+#define OBJ_CCLOSURE     8   /* C closure: fn name + inline Lua upvalues */
 
-/* Special tag written inline in the TValue stream for C function refs.
-** Followed by: uint16_t name_len, then name_len bytes of "lib.func". */
+/* Tag written inline in the TValue stream for light C function refs.
+** Followed by: uint16_t name_len, then name_len bytes of "lib.func".
+** Must not have bit 6 (BIT_ISCOLLECTABLE = 0x40) set, or rb_skip_tv will
+** misinterpret it as a collectible GC reference and skip 4 bytes instead. */
 #define CFUNC_TAG 0x80
 
 #define ID_NULL 0u
@@ -121,8 +124,10 @@ static const char *cfmap_lookup(const CFuncMap *m, lua_CFunction fn) {
   return NULL;
 }
 
-/* Load side: "libname.funcname" string  →  TValue (LCF or CCL) */
-typedef struct { char *name; TValue val; } CFuncRevEntry;
+/* Load side: "libname.funcname" string  →  lua_CFunction pointer.
+** Stores only the pointer (not a TValue) so the map can be built on
+** a temporary side state without creating GC references into it. */
+typedef struct { char *name; lua_CFunction fn; } CFuncRevEntry;
 typedef struct { CFuncRevEntry *ents; int count; int cap; } CFuncRevMap;
 
 static void cfrev_init(CFuncRevMap *m) { m->ents = NULL; m->count = m->cap = 0; }
@@ -131,24 +136,23 @@ static void cfrev_free(CFuncRevMap *m) {
   free(m->ents);
   m->ents = NULL; m->count = m->cap = 0;
 }
-static void cfrev_add(CFuncRevMap *m, const char *name, TValue val) {
+static void cfrev_add(CFuncRevMap *m, const char *name, lua_CFunction fn) {
   if (m->count >= m->cap) {
     m->cap = m->cap ? m->cap * 2 : 32;
     m->ents = (CFuncRevEntry *)realloc(m->ents, (size_t)m->cap * sizeof(CFuncRevEntry));
   }
   m->ents[m->count].name = strdup(name);
-  m->ents[m->count].val  = val;
+  m->ents[m->count].fn   = fn;
   m->count++;
 }
-static int cfrev_lookup(const CFuncRevMap *m, const char *name, size_t nlen,
-                        TValue *out) {
+/* Returns the lua_CFunction for the given name, or NULL if not found. */
+static lua_CFunction cfrev_lookup(const CFuncRevMap *m,
+                                  const char *name, size_t nlen) {
   for (int i = 0; i < m->count; i++)
     if (strlen(m->ents[i].name) == nlen &&
-        memcmp(m->ents[i].name, name, nlen) == 0) {
-      *out = m->ents[i].val;
-      return 1;
-    }
-  return 0;
+        memcmp(m->ents[i].name, name, nlen) == 0)
+      return m->ents[i].fn;
+  return NULL;
 }
 
 /* Enumerate a table on the top of the stack, recording C functions into m.
@@ -282,17 +286,15 @@ static void enum_table_into_cfrev(CFuncRevMap *m, lua_State *L,
   lua_pushnil(L);
   while (lua_next(L, -2)) {
     if (lua_isfunction(L, -1)) {
-      TValue val = *s2v(L->top.p - 1);
-      if (lua_type(L, -2) == LUA_TSTRING) {
+      lua_CFunction fn = lua_tocfunction(L, -1);
+      if (fn && lua_type(L, -2) == LUA_TSTRING) {
         char key[512];
-        size_t klen;
         snprintf(key, sizeof(key), "%s.%s", libname, lua_tostring(L, -2));
-        klen = strlen(key);
-        if (!cfrev_lookup(m, key, klen, &val))
-          cfrev_add(m, key, val);
+        size_t klen = strlen(key);
+        if (!cfrev_lookup(m, key, klen))
+          cfrev_add(m, key, fn);
       }
     } else if (lua_type(L, -1) == LUA_TTABLE) {
-      /* recurse one level (catches package.searchers, etc.) */
       char sub[512];
       if (lua_type(L, -2) == LUA_TSTRING)
         snprintf(sub, sizeof(sub), "%s.%s", libname, lua_tostring(L, -2));
@@ -301,16 +303,17 @@ static void enum_table_into_cfrev(CFuncRevMap *m, lua_State *L,
       lua_pushnil(L);
       while (lua_next(L, -2)) {
         if (lua_isfunction(L, -1)) {
-          TValue val2 = *s2v(L->top.p - 1);
-          char key[512];
-          size_t klen;
-          if (lua_type(L, -2) == LUA_TSTRING)
-            snprintf(key, sizeof(key), "%s.%s", sub, lua_tostring(L, -2));
-          else
-            snprintf(key, sizeof(key), "%s.?", sub);
-          klen = strlen(key);
-          if (!cfrev_lookup(m, key, klen, &val2))
-            cfrev_add(m, key, val2);
+          lua_CFunction fn2 = lua_tocfunction(L, -1);
+          if (fn2) {
+            char key[512];
+            if (lua_type(L, -2) == LUA_TSTRING)
+              snprintf(key, sizeof(key), "%s.%s", sub, lua_tostring(L, -2));
+            else
+              snprintf(key, sizeof(key), "%s.?", sub);
+            size_t klen = strlen(key);
+            if (!cfrev_lookup(m, key, klen))
+              cfrev_add(m, key, fn2);
+          }
         }
         lua_pop(L, 1);
       }
@@ -319,10 +322,12 @@ static void enum_table_into_cfrev(CFuncRevMap *m, lua_State *L,
   }
 }
 
-/* Build load-side map on the new state L (GC must be stopped). */
-static void build_cfmap_for_load(CFuncRevMap *m, lua_State *L,
-                                  const luaser_Lib *libs) {
+/* Build load-side map on a fresh temporary state so openers never touch the
+** caller's state (which may have custom globals, a replaced require, etc.). */
+static void build_cfmap_for_load(CFuncRevMap *m, const luaser_Lib *libs) {
   if (!libs) return;
+  lua_State *tmp = luaL_newstate();
+  if (!tmp) return;
 
   int nlibs = 0;
   for (const luaser_Lib *lib = libs; lib->libname; lib++) nlibs++;
@@ -331,60 +336,60 @@ static void build_cfmap_for_load(CFuncRevMap *m, lua_State *L,
 
   /* Phase 1: call all openers */
   for (int i = 0; i < nlibs; i++) {
-    lua_pushcfunction(L, libs[i].opener);
-    if (lua_pcall(L, 0, 1, 0) != LUA_OK || lua_type(L, -1) != LUA_TTABLE) {
-      lua_settop(L, 0);
+    lua_pushcfunction(tmp, libs[i].opener);
+    if (lua_pcall(tmp, 0, 1, 0) != LUA_OK || lua_type(tmp, -1) != LUA_TTABLE) {
+      lua_settop(tmp, 0);
       refs[i] = LUA_NOREF;
     } else {
-      refs[i] = luaL_ref(L, LUA_REGISTRYINDEX);
+      refs[i] = luaL_ref(tmp, LUA_REGISTRYINDEX);
     }
   }
 
-  /* Phase 2: enumerate each saved table */
+  /* Phase 2: enumerate each returned library table */
   for (int i = 0; i < nlibs; i++) {
     if (refs[i] == LUA_NOREF) continue;
-    lua_rawgeti(L, LUA_REGISTRYINDEX, refs[i]);
-    enum_table_into_cfrev(m, L, libs[i].libname);
-    lua_pop(L, 1);
-    luaL_unref(L, LUA_REGISTRYINDEX, refs[i]);
+    lua_rawgeti(tmp, LUA_REGISTRYINDEX, refs[i]);
+    enum_table_into_cfrev(m, tmp, libs[i].libname);
+    lua_pop(tmp, 1);
+    luaL_unref(tmp, LUA_REGISTRYINDEX, refs[i]);
   }
 
   /* Phase 3: auxiliary tables in the registry (e.g. io file metatable) */
-  lua_pushnil(L);
-  while (lua_next(L, LUA_REGISTRYINDEX)) {
-    if (lua_type(L, -1) == LUA_TTABLE && lua_type(L, -2) == LUA_TSTRING) {
-      const char *regkey = lua_tostring(L, -2);
+  lua_pushnil(tmp);
+  while (lua_next(tmp, LUA_REGISTRYINDEX)) {
+    if (lua_type(tmp, -1) == LUA_TTABLE && lua_type(tmp, -2) == LUA_TSTRING) {
+      const char *regkey = lua_tostring(tmp, -2);
       if (regkey) {
         char libname[256];
         snprintf(libname, sizeof(libname), "_registry.%s", regkey);
-        enum_table_into_cfrev(m, L, libname);
-        /* recurse into __index if it is a table (e.g. io file methods) */
-        lua_getfield(L, -1, "__index");
-        if (lua_type(L, -1) == LUA_TTABLE) {
+        enum_table_into_cfrev(m, tmp, libname);
+        lua_getfield(tmp, -1, "__index");
+        if (lua_type(tmp, -1) == LUA_TTABLE) {
           char idx_name[320];
           snprintf(idx_name, sizeof(idx_name), "%s.__index", libname);
-          enum_table_into_cfrev(m, L, idx_name);
+          enum_table_into_cfrev(m, tmp, idx_name);
         }
-        lua_pop(L, 1);
+        lua_pop(tmp, 1);
       }
     }
-    lua_pop(L, 1);
+    lua_pop(tmp, 1);
   }
 
   /* Phase 4: type metatables (e.g. string arithmetic metamethods) */
-  lua_pushstring(L, "");
-  if (lua_getmetatable(L, -1)) {
-    enum_table_into_cfrev(m, L, "_string_meta");
-    lua_pop(L, 1);
+  lua_pushstring(tmp, "");
+  if (lua_getmetatable(tmp, -1)) {
+    enum_table_into_cfrev(m, tmp, "_string_meta");
+    lua_pop(tmp, 1);
   }
-  lua_pop(L, 1);
+  lua_pop(tmp, 1);
 
   /* Phase 5: globals table for C closures injected by openers into _G */
-  lua_pushglobaltable(L);
-  enum_table_into_cfrev(m, L, "_G");
-  lua_pop(L, 1);
+  lua_pushglobaltable(tmp);
+  enum_table_into_cfrev(m, tmp, "_G");
+  lua_pop(tmp, 1);
 
   free(refs);
+  lua_close(tmp);
 }
 
 /* -----------------------------------------------------------------------
@@ -525,7 +530,7 @@ static int is_serializable(GCObject *o) {
   case LUA_TUPVAL:
     return 1;
   case LUA_TFUNCTION:
-    return o->tt == LUA_VLCL;   /* Lua closures only; C closures handled inline */
+    return o->tt == LUA_VLCL || o->tt == LUA_VCCL;
   default:
     return 0;
   }
@@ -581,6 +586,10 @@ static void process_obj(SerState *s, ObjQ *q, GCObject *o) {
       if (cl->p) discover_obj(s, q, obj2gco(cl->p));
       for (int i = 0; i < cl->nupvalues; i++)
         if (cl->upvals[i]) discover_obj(s, q, obj2gco(cl->upvals[i]));
+    } else if (o->tt == LUA_VCCL) {
+      CClosure *cl = gco2ccl(o);
+      for (int i = 0; i < cl->nupvalues; i++)
+        discover_tv(s, q, &cl->upvalue[i]);
     }
     break;
   case LUA_TUPVAL: {
@@ -619,9 +628,9 @@ static void write_tv(WBuf *b, SerState *s, const TValue *v) {
     wb_u8(b, rawtt(v)); wb_u64(b, (uint64_t)(lua_Integer)ivalue(v));
   } else if (ttisfloat(v)) {
     wb_u8(b, rawtt(v)); wb_dbl(b, fltvalue(v));
-  } else if (ttislcf(v) || ttisCclosure(v)) {
-    /* C function (light or closure): serialize by registered name */
-    lua_CFunction fn = ttislcf(v) ? fvalue(v) : gco2ccl(gcvalue(v))->f;
+  } else if (ttislcf(v)) {
+    /* Light C function: serialize by registered name */
+    lua_CFunction fn = fvalue(v);
     const char *name = cfmap_lookup(&s->cfm, fn);
     if (!name) {
       if (!s->error) {
@@ -738,6 +747,28 @@ static void wobj_upval(WBuf *b, SerState *s, UpVal *uv) {
   }
 }
 
+static void wobj_cclosure(WBuf *b, SerState *s, CClosure *cl) {
+  lua_CFunction fn = cl->f;
+  const char *name = cfmap_lookup(&s->cfm, fn);
+  if (!name) {
+    if (!s->error) {
+      s->error = 1;
+      snprintf(s->errmsg, sizeof(s->errmsg),
+               "unknown C closure function at %p", (void *)(uintptr_t)fn);
+    }
+    wb_u8(b, CFUNC_TAG); wb_u16(b, 0);
+    wb_u8(b, 0); /* nuv = 0, keep format consistent */
+    return;
+  }
+  uint16_t nlen = (uint16_t)strlen(name);
+  wb_u8(b, CFUNC_TAG);
+  wb_u16(b, nlen);
+  wb_write(b, name, nlen);
+  wb_u8(b, (uint8_t)cl->nupvalues);
+  for (int i = 0; i < cl->nupvalues; i++)
+    write_tv(b, s, &cl->upvalue[i]);
+}
+
 static void wobj_thread(WBuf *b, SerState *s, lua_State *th) {
   wb_u8(b, (uint8_t)th->status);
   int32_t nstack = (int32_t)(th->top.p - th->stack.p);
@@ -788,7 +819,8 @@ static void write_obj(WBuf *b, SerState *s, GCObject *o) {
   case LUA_TSTRING:   type_code = OBJ_STRING;   break;
   case LUA_TTABLE:    type_code = OBJ_TABLE;     break;
   case LUA_TPROTO:    type_code = OBJ_PROTO;     break;
-  case LUA_TFUNCTION: type_code = (o->tt == LUA_VLCL) ? OBJ_LCLOSURE : 0; break;
+  case LUA_TFUNCTION: type_code = (o->tt == LUA_VLCL) ? OBJ_LCLOSURE :
+                                  (o->tt == LUA_VCCL) ? OBJ_CCLOSURE : 0; break;
   case LUA_TUPVAL:    type_code = upisopen(gco2upv(o)) ? OBJ_UPVAL_OPEN : OBJ_UPVAL_CLOSED; break;
   case LUA_TTHREAD:   type_code = OBJ_THREAD;   break;
   default:            type_code = 0; break;
@@ -805,6 +837,7 @@ static void write_obj(WBuf *b, SerState *s, GCObject *o) {
   case OBJ_TABLE:        wobj_table   (b, s, gco2t(o)); break;
   case OBJ_PROTO:        wobj_proto   (b, s, gco2p(o)); break;
   case OBJ_LCLOSURE:     wobj_lclosure(b, s, gco2lcl(o)); break;
+  case OBJ_CCLOSURE:     wobj_cclosure(b, s, gco2ccl(o)); break;
   case OBJ_UPVAL_CLOSED: wobj_upval   (b, s, gco2upv(o)); break;
   case OBJ_UPVAL_OPEN:   break;
   case OBJ_THREAD:       wobj_thread  (b, s, gco2th(o)); break;
@@ -860,7 +893,7 @@ typedef struct {
   size_t     *obj_offsets; /* start of each object's data in rb */
   lua_State  *L;           /* the new state being built */
   uint32_t    main_thread_id;
-  CFuncRevMap cfrev;       /* "lib.func" → TValue */
+  CFuncRevMap cfrev;       /* "lib.func" → lua_CFunction pointer */
   int         error;
   char        errmsg[256];
 } DeserState;
@@ -874,7 +907,8 @@ static TValue ds_read_tv(DeserState *d) {
     uint16_t nlen = rb_u16(&d->rb);
     const char *name = (const char *)(d->rb.data + d->rb.pos);
     d->rb.pos += nlen;
-    if (!cfrev_lookup(&d->cfrev, name, nlen, &v)) {
+    lua_CFunction fn = cfrev_lookup(&d->cfrev, name, nlen);
+    if (!fn) {
       if (!d->error) {
         d->error = 1;
         int n = nlen < 200 ? (int)nlen : 200;
@@ -882,6 +916,8 @@ static TValue ds_read_tv(DeserState *d) {
                  "unknown C function identifier '%.*s'", n, name);
       }
       setnilvalue(&v);
+    } else {
+      setfvalue(&v, fn);
     }
   } else if (ttisinteger(&v))    { v.value_.i = (lua_Integer)rb_u64(&d->rb); }
   else if (ttisfloat(&v))        { v.value_.n = rb_dbl(&d->rb); }
@@ -1014,6 +1050,26 @@ static void fill_lclosure(DeserState *d, LClosure *cl) {
     uint32_t uid = rb_u32(rb);
     cl->upvals[i] = uid ? (UpVal *)d->id_to_ptr[uid] : NULL;
   }
+}
+
+static void fill_cclosure(DeserState *d, CClosure *cl) {
+  RBuf *rb = &d->rb;
+  uint8_t tag = rb_u8(rb);
+  if (tag == CFUNC_TAG) {
+    uint16_t nlen = rb_u16(rb);
+    const char *name = (const char *)(rb->data + rb->pos);
+    rb->pos += nlen;
+    cl->f = cfrev_lookup(&d->cfrev, name, nlen);
+    if (!cl->f && !d->error) {
+      d->error = 1;
+      int n = nlen < 200 ? (int)nlen : 200;
+      snprintf(d->errmsg, sizeof(d->errmsg),
+               "unknown C closure '%.*s'", n, name);
+    }
+  }
+  uint8_t nuv = rb_u8(rb);
+  for (int i = 0; i < (int)nuv; i++)
+    cl->upvalue[i] = ds_read_tv(d);
 }
 
 static void fill_upval_closed(DeserState *d, UpVal *uv) {
@@ -1178,8 +1234,9 @@ lua_State *luaser_load(const unsigned char *buf, size_t size,
 
   lua_gc(L, LUA_GCSTOP, 0);
 
-  /* Build reverse C function map on the new state (GC already stopped). */
-  build_cfmap_for_load(&d.cfrev, L, libs);
+  /* Build reverse C function map on a fresh side state so openers never
+  ** touch the new state's globals. */
+  build_cfmap_for_load(&d.cfrev, libs);
 
   d.id_to_ptr = (void **)calloc(d.num_objects + 1, sizeof(void *));
   if (!d.id_to_ptr) goto fail_L;
@@ -1226,6 +1283,20 @@ lua_State *luaser_load(const unsigned char *buf, size_t size,
       LClosure *cl = luaF_newLclosure(L, nuv);
       cl->p = NULL;
       for (int j = 0; j < nuv; j++) cl->upvals[j] = NULL;
+      d.id_to_ptr[id] = cl;
+      break;
+    }
+    case OBJ_CCLOSURE: {
+      /* skip fn name: CFUNC_TAG byte + uint16 nlen + nlen bytes */
+      uint8_t ctag = rb_u8(&d.rb);
+      if (ctag == CFUNC_TAG) {
+        uint16_t nlen = rb_u16(&d.rb);
+        d.rb.pos += nlen;
+      }
+      uint8_t nuv   = rb_u8(&d.rb);
+      for (int j = 0; j < (int)nuv; j++) rb_skip_tv(&d.rb);
+      CClosure *cl  = luaF_newCclosure(L, nuv);
+      cl->f         = NULL;
       d.id_to_ptr[id] = cl;
       break;
     }
@@ -1283,7 +1354,16 @@ lua_State *luaser_load(const unsigned char *buf, size_t size,
   }
 
   /* ----------------------------------------------------------------
-  ** Pass 2d: fill tables
+  ** Pass 2d: fill C closures (fn pointer + upvalue TValues)
+  ** -------------------------------------------------------------- */
+  for (uint32_t i = 0; i < d.num_objects; i++) {
+    if (d.obj_types[i] != OBJ_CCLOSURE) continue;
+    d.rb.pos = d.obj_offsets[i];
+    fill_cclosure(&d, (CClosure *)d.id_to_ptr[i + 1]);
+  }
+
+  /* ----------------------------------------------------------------
+  ** Pass 2e: fill tables
   ** -------------------------------------------------------------- */
   for (uint32_t i = 0; i < d.num_objects; i++) {
     if (d.obj_types[i] != OBJ_TABLE) continue;
@@ -1292,7 +1372,7 @@ lua_State *luaser_load(const unsigned char *buf, size_t size,
   }
 
   /* ----------------------------------------------------------------
-  ** Pass 2e: fill threads (main thread first, then coroutines)
+  ** Pass 2f: fill threads (main thread first, then coroutines)
   ** -------------------------------------------------------------- */
   if (main_thread_id && main_thread_id <= d.num_objects) {
     uint32_t i = main_thread_id - 1;

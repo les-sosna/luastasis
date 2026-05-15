@@ -568,6 +568,67 @@ static void test_cfunc(void) {
 }
 
 /* -----------------------------------------------------------------------
+** Test 12 – luaser_save must not modify the caller's lua_State
+** If openers were called on L instead of a side state, they would overwrite
+** standard globals (_G.package, require, etc.) and clobber custom ones.
+** --------------------------------------------------------------------- */
+static void test_save_preserves_state(void) {
+  printf("== test_save_preserves_state ==\n");
+  lua_State *L = new_state();
+
+  /* Install a sentinel global and override require with a custom function. */
+  run(L,
+    "my_sentinel = 99999\n"
+    "my_table    = { key = 'preserved' }\n"
+    "require = function(m) return 'intercepted:' .. m end\n"
+  );
+
+  /* Verify our custom require works before the save. */
+  lua_getglobal(L, "require");
+  lua_pushstring(L, "test");
+  lua_call(L, 1, 1);
+  CHECK(strcmp(lua_tostring(L, -1), "intercepted:test") == 0,
+        "custom require works before save",
+        "got '%s'", lua_tostring(L, -1));
+  lua_pop(L, 1);
+
+  /* Perform the save. */
+  unsigned char *buf = NULL;
+  size_t sz = 0;
+  int rc = luaser_save(L, std_libs, &buf, &sz);
+  free(buf);
+
+  CHECK(rc == 0, "save succeeds", "rc=%d", rc);
+
+  /* Sentinel must still be intact. */
+  lua_getglobal(L, "my_sentinel");
+  CHECK(lua_tointeger(L, -1) == 99999,
+        "my_sentinel unchanged after save",
+        "got %lld", (long long)lua_tointeger(L, -1));
+  lua_pop(L, 1);
+
+  /* Custom table must still be intact. */
+  lua_getglobal(L, "my_table");
+  lua_getfield(L, -1, "key");
+  CHECK(lua_type(L, -1) == LUA_TSTRING &&
+        strcmp(lua_tostring(L, -1), "preserved") == 0,
+        "my_table.key unchanged after save",
+        "got '%s'", lua_tostring(L, -1));
+  lua_pop(L, 2);
+
+  /* Custom require must still be our override, not the original. */
+  lua_getglobal(L, "require");
+  lua_pushstring(L, "foo");
+  lua_call(L, 1, 1);
+  CHECK(strcmp(lua_tostring(L, -1), "intercepted:foo") == 0,
+        "custom require not overwritten by save",
+        "got '%s'", lua_tostring(L, -1));
+  lua_pop(L, 1);
+
+  lua_close(L);
+}
+
+/* -----------------------------------------------------------------------
 ** main
 ** --------------------------------------------------------------------- */
 int main(void) {
@@ -584,6 +645,7 @@ int main(void) {
   test_globals_env();
   test_mixed_keys();
   test_cfunc();
+  test_save_preserves_state();
   printf("=== Done ===\n");
   return 0;
 }
