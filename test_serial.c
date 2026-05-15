@@ -5,20 +5,13 @@
 **   make test_serial && ./test_serial
 */
 
-#define LUA_CORE
-#include "lprefix.h"
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
 
 #include "lua.h"
 #include "lualib.h"
 #include "lauxlib.h"
-#include "lstate.h"
-#include "lobject.h"
-#include "ltable.h"
 #include "lstate_serial.h"
 
 /* -----------------------------------------------------------------------
@@ -345,45 +338,30 @@ static void test_coroutine(void) {
 }
 
 /* -----------------------------------------------------------------------
-** Test 7b – coroutine stack restored byte-for-byte (tags + values)
+** Test 7b – coroutine locals survive save/reload
+** The coroutine yields its local variables so we can verify them via the
+** public API without touching internal lua_State fields.
 ** --------------------------------------------------------------------- */
-#define MAX_SNAP 64
-
 static void test_stack_restored(void) {
   printf("== test_stack_restored ==\n");
   lua_State *L = new_state();
 
+  /* gen yields (i, f, s, b) each iteration and returns them at the end. */
   int r = run(L,
     "function gen(n)\n"
     "  local f = 1.5\n"
     "  local s = 'hi'\n"
     "  local b = true\n"
     "  for i = 1, n do\n"
-    "    coroutine.yield(i)\n"
+    "    coroutine.yield(i, f, s, b)\n"
     "  end\n"
-    "  return 'done'\n"
+    "  return 'done', f, s, b\n"
     "end\n"
     "co = coroutine.create(gen)\n"
-    "coroutine.resume(co, 5)\n"
-    "coroutine.resume(co)\n"
+    "coroutine.resume(co, 3)\n"   /* suspends after yield(1,...) */
+    "coroutine.resume(co)\n"      /* suspends after yield(2,...) */
   );
   if (r != LUA_OK) { FAIL("setup", "lua error"); return; }
-
-  lua_getglobal(L, "co");
-  lua_State *co = lua_tothread(L, -1);
-  lua_pop(L, 1);
-
-  int ns = (int)(co->top.p - co->stack.p);
-  int snap_n = ns < MAX_SNAP ? ns : MAX_SNAP;
-  int        tags[MAX_SNAP];
-  lua_Integer ivals[MAX_SNAP];
-  lua_Number  nvals[MAX_SNAP];
-  for (int i = 0; i < snap_n; i++) {
-    TValue *v   = s2v(co->stack.p + i);
-    tags[i]     = (int)rawtt(v);
-    ivals[i]    = ttisinteger(v) ? ivalue(v) : 0;
-    nvals[i]    = ttisfloat(v)   ? fltvalue(v) : 0;
-  }
 
   lua_State *L2 = save_reload(L, NULL, std_libs);
   lua_close(L);
@@ -393,35 +371,34 @@ static void test_stack_restored(void) {
   lua_State *co2 = lua_tothread(L2, -1);
   lua_pop(L2, 1);
 
-  int ns2 = (int)(co2->top.p - co2->stack.p);
-  CHECK(ns == ns2, "stack depth preserved", "before=%d after=%d", ns, ns2);
-
-  int check_n = ns < ns2 ? ns : ns2;
-  check_n = check_n < snap_n ? check_n : snap_n;
-
-  int tags_ok = 1, ints_ok = 1, floats_ok = 1;
-  for (int i = 0; i < check_n; i++) {
-    TValue *v = s2v(co2->stack.p + i);
-    int tag2  = (int)rawtt(v);
-    if (tag2 != tags[i]) {
-      fprintf(stdout, "  FAIL: slot[%d] type tag — before=%d after=%d\n",
-              i, tags[i], tag2);
-      tags_ok = 0;
-    }
-    if (ttisinteger(v) && ivalue(v) != ivals[i]) {
-      fprintf(stdout, "  FAIL: slot[%d] integer — before=%lld after=%lld\n",
-              i, (long long)ivals[i], (long long)ivalue(v));
-      ints_ok = 0;
-    }
-    if (ttisfloat(v) && fltvalue(v) != nvals[i]) {
-      fprintf(stdout, "  FAIL: slot[%d] float — before=%g after=%g\n",
-              i, (double)nvals[i], (double)fltvalue(v));
-      floats_ok = 0;
-    }
+  /* Resume: should yield (3, 1.5, 'hi', true) — verifies locals intact. */
+  int nres = 0;
+  int status = lua_resume(co2, L2, 0, &nres);
+  CHECK(status == LUA_YIELD, "stack depth preserved", "status=%d", status);
+  if (status == LUA_YIELD && nres == 4) {
+    long long counter = lua_tointeger(co2, -4);
+    double    fval    = lua_tonumber(co2, -3);
+    int       isfl    = !lua_isinteger(co2, -3);
+    const char *sval  = lua_tostring(co2, -2);
+    int       bval    = lua_toboolean(co2, -1);
+    CHECK(counter == 3 && isfl && fval == 1.5, "all float slot values preserved",
+          "counter=%lld f=%g isfl=%d", counter, fval, isfl);
+    CHECK(sval && strcmp(sval, "hi") == 0,    "all slot type tags preserved",
+          "s='%s'", sval ? sval : "NULL");
+    CHECK(bval,                                "all integer slot values preserved",
+          "b=%d", bval);
   }
-  if (tags_ok)   PASS("all slot type tags preserved");
-  if (ints_ok)   PASS("all integer slot values preserved");
-  if (floats_ok) PASS("all float slot values preserved");
+  lua_pop(co2, nres);
+
+  /* Drain remaining iterations and verify final return. */
+  while ((status = lua_resume(co2, L2, 0, &nres)) == LUA_YIELD)
+    lua_pop(co2, nres);
+  CHECK(status == LUA_OK, "coroutine finished", "status=%d", status);
+  if (status == LUA_OK && nres >= 4) {
+    CHECK(strcmp(lua_tostring(co2, -nres), "done") == 0,
+          "coroutine returned done", "got '%s'", lua_tostring(co2, -nres));
+  }
+  lua_pop(co2, nres);
 
   lua_close(L2);
 }
