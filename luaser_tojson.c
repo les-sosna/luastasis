@@ -18,38 +18,14 @@
 #include <float.h>
 #include <errno.h>
 
-/* -------------------------------------------------------------------------
-** Format constants — must match lstate_serial.c
-** ----------------------------------------------------------------------- */
+#include "luaser_format.h"
 
-#define OBJ_STRING       1
-#define OBJ_TABLE        2
-#define OBJ_PROTO        3
-#define OBJ_LCLOSURE     4
-#define OBJ_UPVAL_CLOSED 5
-#define OBJ_UPVAL_OPEN   6
-#define OBJ_THREAD       7
-#define OBJ_CCLOSURE     8
+/* Sizes of Lua 5.4 internal structures used in the proto record. */
+#define INSTR_SZ    4   /* sizeof(Instruction) */
+#define ABSLINE_SZ  8   /* sizeof(AbsLineInfo): int32 pc + int32 line */
 
-/* Inline tag for light-C-function TValues in the stream */
-#define CFUNC_TAG  0x80u
-
-/* TValue tag bytes (Lua 5.4 lobject.h, little-endian bit layout):
-**   bit 6 (0x40) = BIT_ISCOLLECTABLE → GC object reference (ID follows)
-**   otherwise    → immediate value   */
-#define TV_NIL    0x00u   /* makevariant(0,0)      */
-#define TV_FALSE  0x01u   /* makevariant(1,0)      */
-#define TV_TRUE   0x11u   /* makevariant(1,1)      */
-#define TV_INT    0x03u   /* makevariant(3,0)      */
-#define TV_FLOAT  0x13u   /* makevariant(3,1)      */
-#define BIT_COLL  0x40u   /* BIT_ISCOLLECTABLE     */
-
-/* Number of public Lua types (determines the mt_ids[] array size) */
+/* Number of public Lua types; determines the type_metatables[] array size. */
 #define LUA_NUMTYPES  9
-
-/* sizeof(Instruction) = 4 bytes; sizeof(AbsLineInfo) = 8 bytes */
-#define INSTR_SZ       4
-#define ABSLINE_SZ     8
 
 /* -------------------------------------------------------------------------
 ** Byte-buffer reader
@@ -218,7 +194,7 @@ static void dump_proto(RBuf *rb) {
   uint8_t flag    = rb_u8(rb);
   uint8_t maxstk  = rb_u8(rb);
   printf(", \"params\":%u, \"is_vararg\":%s, \"max_stack\":%u",
-         params, (flag & 1) ? "true" : "false", maxstk);
+         params, (flag & LPF_ISVARARG) ? "true" : "false", maxstk);
 
   uint32_t ncode = rb_u32(rb);
   printf(", \"num_instructions\":%u", ncode);

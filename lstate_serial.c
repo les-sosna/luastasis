@@ -26,23 +26,7 @@
 
 #include "lstate_serial.h"
 
-/* -----------------------------------------------------------------------
-** Object type codes written to the buffer
-** --------------------------------------------------------------------- */
-#define OBJ_STRING       1
-#define OBJ_TABLE        2
-#define OBJ_PROTO        3
-#define OBJ_LCLOSURE     4
-#define OBJ_UPVAL_CLOSED 5
-#define OBJ_UPVAL_OPEN   6   /* placeholder; data lives in owning thread */
-#define OBJ_THREAD       7
-#define OBJ_CCLOSURE     8   /* C closure: fn name + inline Lua upvalues */
-
-/* Tag written inline in the TValue stream for light C function refs.
-** Followed by: uint16_t name_len, then name_len bytes of "lib.func".
-** Must not have bit 6 (BIT_ISCOLLECTABLE = 0x40) set, or rb_skip_tv will
-** misinterpret it as a collectible GC reference and skip 4 bytes instead. */
-#define CFUNC_TAG 0x80
+#include "luaser_format.h"
 
 #define ID_NULL 0u
 

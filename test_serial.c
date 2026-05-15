@@ -568,7 +568,89 @@ static void test_cfunc(void) {
 }
 
 /* -----------------------------------------------------------------------
-** Test 12 – luaser_save must not modify the caller's lua_State
+** Test 12 – vararg functions survive round-trip
+** Exercises both PF_VAHID (hidden vararg, any use of ...) and PF_VATAB
+** (vararg table, triggered by {...} construction) which are separate bits
+** in Lua 5.5's proto flag byte.
+** --------------------------------------------------------------------- */
+static void test_vararg(void) {
+  printf("== test_vararg ==\n");
+  lua_State *L = new_state();
+  lua_State *L2 = save_reload(L,
+    /* PF_VAHID: plain ... passthrough */
+    "function identity(...) return ... end\n"
+    /* PF_VAHID: select on ... */
+    "function count(...) return select('#', ...) end\n"
+    /* PF_VAHID | PF_VATAB: {...} forces a vararg table */
+    "function sum(...)\n"
+    "  local t = {...}\n"
+    "  local s = 0\n"
+    "  for i = 1, #t do s = s + t[i] end\n"
+    "  return s\n"
+    "end\n"
+    /* vararg coroutine: tests vararg + yield interaction */
+    "function vararg_gen(...)\n"
+    "  local t = {...}\n"
+    "  for i = 1, #t do coroutine.yield(t[i]) end\n"
+    "end\n"
+    "vco = coroutine.create(vararg_gen)\n"
+    "coroutine.resume(vco, 10, 20, 30)\n",  /* suspends after yield(10) */
+    std_libs
+  );
+  lua_close(L);
+  if (!L2) { FAIL("reload", "NULL"); return; }
+
+  /* identity('a','b') → 'a','b' */
+  get_global(L2, "identity");
+  lua_pushstring(L2, "a"); lua_pushstring(L2, "b");
+  lua_call(L2, 2, 2);
+  CHECK(strcmp(lua_tostring(L2, -2), "a") == 0, "identity ret[1]='a'",
+        "got '%s'", lua_tostring(L2, -2));
+  CHECK(strcmp(lua_tostring(L2, -1), "b") == 0, "identity ret[2]='b'",
+        "got '%s'", lua_tostring(L2, -1));
+  lua_pop(L2, 2);
+
+  /* count(10,20,30) → 3 */
+  get_global(L2, "count");
+  lua_pushinteger(L2, 10); lua_pushinteger(L2, 20); lua_pushinteger(L2, 30);
+  lua_call(L2, 3, 1);
+  CHECK(lua_tointeger(L2, -1) == 3, "count(10,20,30)=3",
+        "got %lld", (long long)lua_tointeger(L2, -1));
+  lua_pop(L2, 1);
+
+  /* sum(1,2,3,4,5) → 15  (uses {...}, exercises PF_VATAB) */
+  get_global(L2, "sum");
+  lua_pushinteger(L2, 1); lua_pushinteger(L2, 2); lua_pushinteger(L2, 3);
+  lua_pushinteger(L2, 4); lua_pushinteger(L2, 5);
+  lua_call(L2, 5, 1);
+  CHECK(lua_tointeger(L2, -1) == 15, "sum(1..5)=15",
+        "got %lld", (long long)lua_tointeger(L2, -1));
+  lua_pop(L2, 1);
+
+  /* vco was suspended after yielding 10; resume → 20, then 30, then done */
+  get_global(L2, "vco");
+  lua_State *vco = lua_tothread(L2, -1);
+  lua_pop(L2, 1);
+  int nres = 0;
+  int st = lua_resume(vco, L2, 0, &nres);
+  CHECK(st == LUA_YIELD && nres == 1 && lua_tointeger(vco, -1) == 20,
+        "vararg coroutine yields 20", "st=%d v=%lld",
+        st, (long long)(nres ? lua_tointeger(vco, -1) : -1));
+  lua_pop(vco, nres);
+  st = lua_resume(vco, L2, 0, &nres);
+  CHECK(st == LUA_YIELD && nres == 1 && lua_tointeger(vco, -1) == 30,
+        "vararg coroutine yields 30", "st=%d v=%lld",
+        st, (long long)(nres ? lua_tointeger(vco, -1) : -1));
+  lua_pop(vco, nres);
+  st = lua_resume(vco, L2, 0, &nres);
+  CHECK(st == LUA_OK, "vararg coroutine finishes", "st=%d", st);
+  lua_pop(vco, nres);
+
+  lua_close(L2);
+}
+
+/* -----------------------------------------------------------------------
+** Test 13 – luaser_save must not modify the caller's lua_State
 ** If openers were called on L instead of a side state, they would overwrite
 ** standard globals (_G.package, require, etc.) and clobber custom ones.
 ** --------------------------------------------------------------------- */
@@ -645,6 +727,7 @@ int main(void) {
   test_globals_env();
   test_mixed_keys();
   test_cfunc();
+  test_vararg();
   test_save_preserves_state();
   printf("=== Done ===\n");
   return 0;
