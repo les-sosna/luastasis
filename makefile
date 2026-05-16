@@ -109,12 +109,14 @@ LUA_O=	lua.o
 SER_O=  lstasis.o
 TEST_SERIAL_T= test_serial
 TEST_SERIAL_O= test_serial.o
+TEST_DET_T= test_determinism
+TEST_DET_O= test_determinism.o
 JSON_T= lstasis_tojson
 JSON_O= lstasis_tojson.o
 JSON_MAIN_O= lstasis_tojson_main.o
 
-ALL_T= $(CORE_T) $(LUA_T) $(TEST_SERIAL_T) $(JSON_T)
-ALL_O= $(CORE_O) $(LUA_O) $(AUX_O) $(LIB_O) $(SER_O) $(TEST_SERIAL_O) $(JSON_O) $(JSON_MAIN_O)
+ALL_T= $(CORE_T) $(LUA_T) $(TEST_SERIAL_T) $(TEST_DET_T) $(JSON_T)
+ALL_O= $(CORE_O) $(LUA_O) $(AUX_O) $(LIB_O) $(SER_O) $(TEST_SERIAL_O) $(TEST_DET_O) $(JSON_O) $(JSON_MAIN_O)
 ALL_A= $(CORE_T)
 
 all:	$(ALL_T)
@@ -133,6 +135,9 @@ $(LUA_T): $(LUA_O) $(CORE_T)
 
 $(TEST_SERIAL_T): $(TEST_SERIAL_O) $(SER_O) $(JSON_O) $(CORE_T)
 	$(CC) -o $@ $(MYLDFLAGS) $(TEST_SERIAL_O) $(SER_O) $(JSON_O) $(CORE_T) $(LIBS) $(MYLIBS) $(DL)
+
+$(TEST_DET_T): $(TEST_DET_O) $(CORE_T) $(LUA_T)
+	$(CC) -o $@ $(MYLDFLAGS) $(TEST_DET_O) $(CORE_T) $(LIBS) $(MYLIBS) $(DL)
 
 $(JSON_T): $(JSON_O) $(JSON_MAIN_O)
 	$(CC) -o $@ $(JSON_O) $(JSON_MAIN_O) -lm
