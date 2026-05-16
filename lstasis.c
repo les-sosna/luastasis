@@ -1,9 +1,9 @@
 /*
-** lstate_serial.c
-** Full lua_State serialization / deserialization via a memory buffer.
+** lstasis.c
+** LuaStasis: full lua_State serialization / deserialization via a memory buffer.
 */
 
-#define lstate_serial_c
+#define lstasis_c
 #define LUA_CORE
 
 #include "lprefix.h"
@@ -24,9 +24,9 @@
 #include "lmem.h"
 #include "lauxlib.h"
 
-#include "lstate_serial.h"
+#include "lstasis.h"
 
-#include "luaser_format.h"
+#include "lstasis_format.h"
 
 #define ID_NULL 0u
 
@@ -188,13 +188,13 @@ static void enum_table_into_cfmap(CFuncMap *m, lua_State *tmp,
 /* Build save-side map.
 ** Two-phase: call ALL openers first (so _G is fully populated, e.g. require
 ** from package appears when enumerating base's _G), then enumerate each table. */
-static void build_cfmap_for_save(CFuncMap *m, const luaser_Lib *libs) {
+static void build_cfmap_for_save(CFuncMap *m, const lstasis_Lib *libs) {
   if (!libs) return;
   lua_State *tmp = luaL_newstate();
   if (!tmp) return;
 
   int nlibs = 0;
-  for (const luaser_Lib *lib = libs; lib->libname; lib++) nlibs++;
+  for (const lstasis_Lib *lib = libs; lib->libname; lib++) nlibs++;
 
   int *refs = (int *)malloc((size_t)nlibs * sizeof(int));
 
@@ -308,13 +308,13 @@ static void enum_table_into_cfrev(CFuncRevMap *m, lua_State *L,
 
 /* Build load-side map on a fresh temporary state so openers never touch the
 ** caller's state (which may have custom globals, a replaced require, etc.). */
-static void build_cfmap_for_load(CFuncRevMap *m, const luaser_Lib *libs) {
+static void build_cfmap_for_load(CFuncRevMap *m, const lstasis_Lib *libs) {
   if (!libs) return;
   lua_State *tmp = luaL_newstate();
   if (!tmp) return;
 
   int nlibs = 0;
-  for (const luaser_Lib *lib = libs; lib->libname; lib++) nlibs++;
+  for (const lstasis_Lib *lib = libs; lib->libname; lib++) nlibs++;
 
   int *refs = (int *)malloc((size_t)nlibs * sizeof(int));
 
@@ -834,7 +834,7 @@ static void write_obj(WBuf *b, SerState *s, GCObject *o) {
 /* -----------------------------------------------------------------------
 ** Public save
 ** --------------------------------------------------------------------- */
-int luaser_save(lua_State *L, const luaser_Lib *libs,
+int lstasis_save(lua_State *L, const lstasis_Lib *libs,
                 unsigned char **out_buf, size_t *out_size) {
   SerState s; ser_init(&s);
   build_cfmap_for_save(&s.cfm, libs);
@@ -852,7 +852,7 @@ int luaser_save(lua_State *L, const luaser_Lib *libs,
     wb_u32(&b, G(L)->mt[i] ? ser_get_id(&s, obj2gco(G(L)->mt[i])) : ID_NULL);
 
   if (s.error) {
-    fprintf(stderr, "luaser_save: %s\n", s.errmsg);
+    fprintf(stderr, "lstasis_save: %s\n", s.errmsg);
     free(b.data);
     ser_free(&s);
     return -1;
@@ -1179,10 +1179,10 @@ static void fill_thread(DeserState *d, lua_State *th, int is_main) {
 }
 
 /* -----------------------------------------------------------------------
-** luaser_load
+** lstasis_load
 ** --------------------------------------------------------------------- */
-lua_State *luaser_load(const unsigned char *buf, size_t size,
-                       const luaser_Lib *libs) {
+lua_State *lstasis_load(const unsigned char *buf, size_t size,
+                       const lstasis_Lib *libs) {
   DeserState d;
   memset(&d, 0, sizeof(d));
   d.rb.data = buf;
@@ -1372,7 +1372,7 @@ lua_State *luaser_load(const unsigned char *buf, size_t size,
   }
 
   if (d.error) {
-    fprintf(stderr, "luaser_load: %s\n", d.errmsg);
+    fprintf(stderr, "lstasis_load: %s\n", d.errmsg);
     goto fail_L;
   }
 

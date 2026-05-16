@@ -13,13 +13,13 @@
 #include "lua.h"
 #include "lualib.h"
 #include "lauxlib.h"
-#include "lstate_serial.h"
-#include "luaser_tojson.h"
+#include "lstasis.h"
+#include "lstasis_tojson.h"
 
 /* -----------------------------------------------------------------------
 ** Standard library registry (used for C function serialization)
 ** --------------------------------------------------------------------- */
-static const luaser_Lib std_libs[] = {
+static const lstasis_Lib std_libs[] = {
   {"base",      luaopen_base},
   {"package",   luaopen_package},
   {"coroutine", luaopen_coroutine},
@@ -55,18 +55,18 @@ static int run(lua_State *L, const char *code) {
 /* Execute code, save, reload, return the reloaded state.
    Caller owns the returned state and must lua_close() it. */
 static lua_State *save_reload(lua_State *L, const char *setup_code,
-                              const luaser_Lib *libs) {
+                              const lstasis_Lib *libs) {
   if (setup_code) {
     int r = run(L, setup_code);
     if (r != LUA_OK) return NULL;
   }
   unsigned char *buf = NULL;
   size_t sz = 0;
-  if (luaser_save(L, libs, &buf, &sz) != 0) {
+  if (lstasis_save(L, libs, &buf, &sz) != 0) {
     fprintf(stderr, "save failed\n");
     return NULL;
   }
-  lua_State *L2 = luaser_load(buf, sz, libs);
+  lua_State *L2 = lstasis_load(buf, sz, libs);
   free(buf);
   return L2;
 }
@@ -652,7 +652,7 @@ static void test_vararg(void) {
 }
 
 /* -----------------------------------------------------------------------
-** Test 13 – luaser_save must not modify the caller's lua_State
+** Test 13 – lstasis_save must not modify the caller's lua_State
 ** If openers were called on L instead of a side state, they would overwrite
 ** standard globals (_G.package, require, etc.) and clobber custom ones.
 ** --------------------------------------------------------------------- */
@@ -679,7 +679,7 @@ static void test_save_preserves_state(void) {
   /* Perform the save. */
   unsigned char *buf = NULL;
   size_t sz = 0;
-  int rc = luaser_save(L, std_libs, &buf, &sz);
+  int rc = lstasis_save(L, std_libs, &buf, &sz);
   free(buf);
 
   CHECK(rc == 0, "save succeeds", "rc=%d", rc);
@@ -753,7 +753,7 @@ static void test_json_empty_state(void) {
 
   unsigned char *buf = NULL;
   size_t sz = 0;
-  int rc = luaser_save(L, NULL, &buf, &sz);
+  int rc = lstasis_save(L, NULL, &buf, &sz);
   CHECK(rc == 0, "save empty state", "rc=%d", rc);
 
   char  *json = NULL;
@@ -761,9 +761,9 @@ static void test_json_empty_state(void) {
   FILE  *fp   = open_memstream(&json, &jsz);
   CHECK(fp != NULL, "open_memstream", "fp=NULL");
 
-  int jrc = luaser_tojson(buf, sz, fp);
+  int jrc = lstasis_tojson(buf, sz, fp);
   fclose(fp);
-  CHECK(jrc == 0, "luaser_tojson succeeds", "jrc=%d", jrc);
+  CHECK(jrc == 0, "lstasis_tojson succeeds", "jrc=%d", jrc);
 
   CHECK(json != NULL && strcmp(json, GOLDEN_EMPTY_STATE) == 0,
         "json matches golden",

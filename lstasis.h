@@ -1,6 +1,6 @@
 /*
-** lstate_serial.h
-** Full lua_State serialization into/from a raw byte buffer.
+** lstasis.h
+** LuaStasis: full lua_State serialization into/from a raw byte buffer.
 ** Invoke only when no Lua code is running.
 **
 ** Supports: nil, bool, integer, float, string, table, Lua closures,
@@ -9,8 +9,8 @@
 ** Not supported: full userdata, light userdata.
 */
 
-#ifndef lstate_serial_h
-#define lstate_serial_h
+#ifndef lstasis_h
+#define lstasis_h
 
 #include <stddef.h>
 #include "lua.h"
@@ -24,7 +24,7 @@
 typedef struct {
   const char    *libname;
   lua_CFunction  opener;
-} luaser_Lib;
+} lstasis_Lib;
 
 /*
 ** Serialize the full state of L into a freshly malloc'd byte buffer.
@@ -33,15 +33,15 @@ typedef struct {
 ** On success, *out_buf points to the buffer (caller must free) and
 ** *out_size holds its length.  Returns 0 on success, -1 on error.
 */
-int luaser_save(lua_State *L, const luaser_Lib *libs,
-                unsigned char **out_buf, size_t *out_size);
+int lstasis_save(lua_State *L, const lstasis_Lib *libs,
+                 unsigned char **out_buf, size_t *out_size);
 
 /*
-** Deserialize a buffer produced by luaser_save.
+** Deserialize a buffer produced by lstasis_save.
 ** libs must match (or be a superset of) the libs used at save time.
 ** Returns a new, fully independent lua_State, or NULL on error.
 */
-lua_State *luaser_load(const unsigned char *buf, size_t size,
-                       const luaser_Lib *libs);
+lua_State *lstasis_load(const unsigned char *buf, size_t size,
+                        const lstasis_Lib *libs);
 
 #endif

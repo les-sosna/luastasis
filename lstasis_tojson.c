@@ -1,15 +1,15 @@
 /*
-** luaser_tojson.c
-** Convert a luaser binary state file (from luaser_save) to a readable JSON dump.
+** lstasis_tojson.c
+** Convert a lstasis snapshot buffer (from lstasis_save) to a readable JSON dump.
 **
 ** Standalone — no Lua headers or linkage required; all format constants are
 ** embedded from the specification in lstate_serial.c.
 **
-** Usage:  luaser_tojson <file.bin>
-**         luaser_tojson < file.bin   (reads from stdin)
+** Usage:  lstasis_tojson <file.bin>
+**         lstasis_tojson < file.bin   (reads from stdin)
 **
 ** Public API:
-**   int luaser_tojson(const unsigned char *buf, size_t size, FILE *out);
+**   int lstasis_tojson(const unsigned char *buf, size_t size, FILE *out);
 */
 
 #include <stdio.h>
@@ -21,8 +21,8 @@
 #include <float.h>
 #include <errno.h>
 
-#include "luaser_format.h"
-#include "luaser_tojson.h"
+#include "lstasis_format.h"
+#include "lstasis_tojson.h"
 
 /* Sizes of Lua 5.4 internal structures used in the proto record. */
 #define INSTR_SZ    4   /* sizeof(Instruction) */
@@ -412,18 +412,18 @@ static int obj_is_single_line(uint8_t t) {
 /* -------------------------------------------------------------------------
 ** Public API
 ** ----------------------------------------------------------------------- */
-int luaser_tojson(const unsigned char *buf, size_t sz, FILE *out) {
+int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
   RBuf rb = { (const uint8_t *)buf, 0, sz, 0 };
   g_out = out;
 
   uint32_t num_objects = rb_u32(&rb);
-  if (rb.err) { fprintf(stderr, "luaser_tojson: truncated header\n"); return 1; }
+  if (rb.err) { fprintf(stderr, "lstasis_tojson: truncated header\n"); return 1; }
 
   /* Index pass: record type code and data offset for each object. */
   uint8_t *types   = (uint8_t *)calloc(num_objects, sizeof(uint8_t));
   size_t  *offsets = (size_t  *)calloc(num_objects, sizeof(size_t));
   if (!types || !offsets) {
-    fprintf(stderr, "luaser_tojson: out of memory\n");
+    fprintf(stderr, "lstasis_tojson: out of memory\n");
     free(types); free(offsets); return 1;
   }
 
@@ -435,11 +435,11 @@ int luaser_tojson(const unsigned char *buf, size_t sz, FILE *out) {
     rb.pos     += dsz;
   }
   if (rb.err) {
-    fprintf(stderr, "luaser_tojson: truncated object table\n");
+    fprintf(stderr, "lstasis_tojson: truncated object table\n");
     free(types); free(offsets); return 1;
   }
   if (rb.pos + 4 + 4 + (size_t)LUA_NUMTYPES * 4 > rb.size) {
-    fprintf(stderr, "luaser_tojson: truncated roots section\n");
+    fprintf(stderr, "lstasis_tojson: truncated roots section\n");
     free(types); free(offsets); return 1;
   }
 

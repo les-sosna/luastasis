@@ -1,12 +1,12 @@
 /*
-** luaser_format.h
-** Binary format constants shared between lstate_serial.c and any reader
-** (e.g. luaser_tojson.c).  All values are part of the on-wire format;
+** lstasis_format.h
+** LuaStasis binary format constants shared between lstasis.c and any reader
+** (e.g. lstasis_tojson.c).  All values are part of the on-wire format;
 ** changing them breaks compatibility with existing buffers.
 */
 
-#ifndef luaser_format_h
-#define luaser_format_h
+#ifndef lstasis_format_h
+#define lstasis_format_h
 
 /* -------------------------------------------------------------------------
 ** Object type codes written to the buffer header
@@ -55,4 +55,4 @@
 #define LPF_VATAB  2   /* function has a vararg table      (PF_VATAB) */
 #define LPF_ISVARARG  (LPF_VAHID | LPF_VATAB)  /* either vararg form */
 
-#endif /* luaser_format_h */
+#endif /* lstasis_format_h */

@@ -106,12 +106,12 @@ LUA_T=	lua
 LUA_O=	lua.o
 
 
-SER_O=  lstate_serial.o
+SER_O=  lstasis.o
 TEST_SERIAL_T= test_serial
 TEST_SERIAL_O= test_serial.o
-JSON_T= luaser_tojson
-JSON_O= luaser_tojson.o
-JSON_MAIN_O= luaser_tojson_main.o
+JSON_T= lstasis_tojson
+JSON_O= lstasis_tojson.o
+JSON_MAIN_O= lstasis_tojson_main.o
 
 ALL_T= $(CORE_T) $(LUA_T) $(TEST_SERIAL_T) $(JSON_T)
 ALL_O= $(CORE_O) $(LUA_O) $(AUX_O) $(LIB_O) $(SER_O) $(TEST_SERIAL_O) $(JSON_O) $(JSON_MAIN_O)
