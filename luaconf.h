@@ -13,6 +13,19 @@
 
 
 /*
+@@ LUASTASIS_DETERMINISTIC enables deterministic-execution mode.
+** When 0 (default), Lua behaviour is identical to upstream.
+** When 1, the runtime is modified so that two states started with the
+** same explicit seed and fed identical inputs produce bit-identical
+** observable behaviour (with documented environment-leak exceptions).
+** See test_determinism.c and the LuaStasis README.
+*/
+#if !defined(LUASTASIS_DETERMINISTIC)
+#define LUASTASIS_DETERMINISTIC		0
+#endif
+
+
+/*
 ** ===================================================================
 ** General Configuration File for Lua
 **

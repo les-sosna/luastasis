@@ -419,28 +419,30 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
   uint32_t num_objects = rb_u32(&rb);
   if (rb.err) { fprintf(stderr, "lstasis_tojson: truncated header\n"); return 1; }
 
-  /* Index pass: record type code and data offset for each object. */
-  uint8_t *types   = (uint8_t *)calloc(num_objects, sizeof(uint8_t));
-  size_t  *offsets = (size_t  *)calloc(num_objects, sizeof(size_t));
-  if (!types || !offsets) {
+  /* Index pass: record type code, objid, and data offset for each object. */
+  uint8_t  *types   = (uint8_t  *)calloc(num_objects, sizeof(uint8_t));
+  uint64_t *objids  = (uint64_t *)calloc(num_objects, sizeof(uint64_t));
+  size_t   *offsets = (size_t   *)calloc(num_objects, sizeof(size_t));
+  if (!types || !objids || !offsets) {
     fprintf(stderr, "lstasis_tojson: out of memory\n");
-    free(types); free(offsets); return 1;
+    free(types); free(objids); free(offsets); return 1;
   }
 
   for (uint32_t i = 0; i < num_objects; i++) {
     if (rb.err) break;
     types[i]    = rb_u8(&rb);
+    objids[i]   = rb_u64(&rb);
     uint32_t dsz = rb_u32(&rb);
     offsets[i]  = rb.pos;
     rb.pos     += dsz;
   }
   if (rb.err) {
     fprintf(stderr, "lstasis_tojson: truncated object table\n");
-    free(types); free(offsets); return 1;
+    free(types); free(objids); free(offsets); return 1;
   }
   if (rb.pos + 4 + 4 + (size_t)LUA_NUMTYPES * 4 > rb.size) {
     fprintf(stderr, "lstasis_tojson: truncated roots section\n");
-    free(types); free(offsets); return 1;
+    free(types); free(objids); free(offsets); return 1;
   }
 
   uint32_t registry_id    = rb_u32(&rb);
@@ -476,7 +478,8 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
     jnl(); fprintf(g_out, "\"%u\": {", i + 1);
     g_depth++;
 
-    fprintf(g_out, "\"type\":\"%s\"", obj_type_name(types[i]));
+    fprintf(g_out, "\"type\":\"%s\", \"objid\":\"0x%016" PRIx64 "\"",
+            obj_type_name(types[i]), objids[i]);
 
     /* Seek to this object's data and parse it. */
     rb.pos = offsets[i];
@@ -507,6 +510,7 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
   jnl(); fputc('}', g_out); fputc('\n', g_out);
 
   free(types);
+  free(objids);
   free(offsets);
   return 0;
 }

@@ -715,6 +715,21 @@ static void test_save_preserves_state(void) {
 /* -----------------------------------------------------------------------
 ** Test 14 – JSON output of an empty (no libs) state matches golden
 ** --------------------------------------------------------------------- */
+/* In vanilla mode every objid serialises as 0; in deterministic mode the
+** objids are stable splitmix64 outputs of (sequence, seed=0).  The golden
+** below is built piecewise so both modes can share it. */
+#if LUASTASIS_DETERMINISTIC
+/* splitmix64 outputs for seq={1,2,3}, seed=0 — main thread is allocated
+** first (seq=1) but discovered second (registry is the entry root). */
+#define GOLDEN_OBJID_MAIN  "0x5692161d100b05e5"   /* seq=1 (main thread) */
+#define GOLDEN_OBJID_REG   "0xdbd238973a2b148a"   /* seq=2 (registry)    */
+#define GOLDEN_OBJID_GLOB  "0x1e535eede31428f0"   /* seq=3 (_G table)    */
+#else
+#define GOLDEN_OBJID_MAIN  "0x0000000000000000"
+#define GOLDEN_OBJID_REG   "0x0000000000000000"
+#define GOLDEN_OBJID_GLOB  "0x0000000000000000"
+#endif
+
 static const char GOLDEN_EMPTY_STATE[] =
   "{\n"
   "  \"format\": \"luaser\",\n"
@@ -725,13 +740,15 @@ static const char GOLDEN_EMPTY_STATE[] =
   "    \"type_metatables\": [null,null,null,null,null,null,null,null,null]\n"
   "  },\n"
   "  \"objects\": {\n"
-  "    \"1\": {\"type\":\"table\", \"entry_count\":3, \"entries\":[\n"
+  "    \"1\": {\"type\":\"table\", \"objid\":\"" GOLDEN_OBJID_REG "\","
+          " \"entry_count\":3, \"entries\":[\n"
   "        {\"key\":{\"int\":1}, \"val\":{\"bool\":false}},\n"
   "        {\"key\":{\"int\":2}, \"val\":{\"ref\":3}},\n"
   "        {\"key\":{\"int\":3}, \"val\":{\"ref\":2}}\n"
   "      ], \"metatable\":null, \"asize\":3\n"
   "    },\n"
-  "    \"2\": {\"type\":\"thread\", \"status\":0, \"status_name\":\"ok\","
+  "    \"2\": {\"type\":\"thread\", \"objid\":\"" GOLDEN_OBJID_MAIN "\","
+          " \"status\":0, \"status_name\":\"ok\","
           " \"stack_size\":1, \"stack\":[\n"
   "        null\n"
   "      ], \"num_callinfos\":1, \"callinfos\":[\n"
@@ -739,7 +756,8 @@ static const char GOLDEN_EMPTY_STATE[] =
           " \"callstatus\":32768}\n"
   "      ], \"open_upvalues\":[]\n"
   "    },\n"
-  "    \"3\": {\"type\":\"table\", \"entry_count\":0, \"entries\":[],"
+  "    \"3\": {\"type\":\"table\", \"objid\":\"" GOLDEN_OBJID_GLOB "\","
+          " \"entry_count\":0, \"entries\":[],"
           " \"metatable\":null, \"asize\":0\n"
   "    }\n"
   "  }\n"
@@ -749,7 +767,10 @@ static const char GOLDEN_EMPTY_STATE[] =
 static void test_json_empty_state(void) {
   printf("== test_json_empty_state ==\n");
 
-  lua_State *L = luaL_newstate();
+  /* Use an explicit, fixed seed so the deterministic-mode objids in the
+  ** golden are reproducible across processes (luaL_newstate auto-seeds
+  ** from time+stack address, which would change every run). */
+  lua_State *L = lua_newstate(luaL_alloc, NULL, 0);
 
   unsigned char *buf = NULL;
   size_t sz = 0;

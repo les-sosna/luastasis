@@ -357,6 +357,11 @@ LUA_API lua_State *lua_newstate (lua_Alloc f, void *ud, unsigned seed) {
   g->warnf = NULL;
   g->ud_warn = NULL;
   g->seed = seed;
+#if LUASTASIS_DETERMINISTIC
+  g->next_seq = 0;
+  /* main thread gets objid #1, derived from the seed alone */
+  L->objid = lstasis_make_objid(++g->next_seq, g->seed);
+#endif
   g->gcstp = GCSTPGC;  /* no GC while building state */
   g->strt.size = g->strt.nuse = 0;
   g->strt.hash = NULL;

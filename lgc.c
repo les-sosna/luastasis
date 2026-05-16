@@ -294,6 +294,23 @@ void luaC_fix (lua_State *L, GCObject *o) {
 ** create a new collectable object (with given type, size, and offset)
 ** and link it to 'allgc' list.
 */
+#if LUASTASIS_DETERMINISTIC
+/*
+** LuaStasis: bijective mix from (sequence number, seed) to a 64-bit
+** identifier.  splitmix64 finalizer — every step is invertible, so
+** distinct sequence numbers always produce distinct objids within the
+** same state.  Cross-state identity is determined by the seed.
+*/
+size_t lstasis_make_objid (size_t seq, unsigned int seed) {
+  uint64_t x = (uint64_t)seq ^ (uint64_t)seed;
+  x = (x ^ (x >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
+  x = (x ^ (x >> 27)) * UINT64_C(0x94d049bb133111eb);
+  x = x ^ (x >> 31);
+  return (size_t)x;
+}
+#endif
+
+
 GCObject *luaC_newobjdt (lua_State *L, lu_byte tt, size_t sz, size_t offset) {
   global_State *g = G(L);
   char *p = cast_charp(luaM_newobject(L, novariant(tt), sz));
@@ -302,6 +319,9 @@ GCObject *luaC_newobjdt (lua_State *L, lu_byte tt, size_t sz, size_t offset) {
   o->tt = tt;
   o->next = g->allgc;
   g->allgc = o;
+#if LUASTASIS_DETERMINISTIC
+  o->objid = lstasis_make_objid(++g->next_seq, g->seed);
+#endif
   return o;
 }
 

@@ -297,9 +297,18 @@ typedef union {
 
 /*
 ** Common Header for all collectable objects (in macro form, to be
-** included in other objects)
+** included in other objects).
+**
+** In LuaStasis deterministic mode, every GCObject also carries a
+** per-state stable identifier (objid).  See lgc.c for the assignment
+** at allocation time.
 */
+#if LUASTASIS_DETERMINISTIC
+#define CommonHeader	struct GCObject *next; size_t objid; \
+                        lu_byte tt; lu_byte marked
+#else
 #define CommonHeader	struct GCObject *next; lu_byte tt; lu_byte marked
+#endif
 
 
 /* Common type for all collectable objects */

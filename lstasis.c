@@ -812,6 +812,11 @@ static void write_obj(WBuf *b, SerState *s, GCObject *o) {
   if (type_code == 0) return;
 
   wb_u8(b, type_code);
+#if LUASTASIS_DETERMINISTIC
+  wb_u64(b, (uint64_t)o->objid);
+#else
+  wb_u64(b, 0);  /* placeholder — only meaningful in deterministic mode */
+#endif
   size_t size_pos = b->size;
   wb_u32(b, 0);
   size_t data_start = b->size;
@@ -1198,8 +1203,9 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   if (!d.obj_types || !d.obj_offsets) goto fail_pre;
 
   for (uint32_t i = 0; i < d.num_objects; i++) {
-    if (!rb_ok(&d.rb, 5)) goto fail_pre;
+    if (!rb_ok(&d.rb, 1 + 8 + 4)) goto fail_pre;
     d.obj_types[i]   = rb_u8(&d.rb);
+    (void)rb_u64(&d.rb);  /* objid — skipped here; restored in step 5 */
     uint32_t dsz     = rb_u32(&d.rb);
     d.obj_offsets[i] = d.rb.pos;
     d.rb.pos        += dsz;
