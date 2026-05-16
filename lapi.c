@@ -493,11 +493,22 @@ LUA_API const void *lua_topointer (lua_State *L, int idx) {
   const TValue *o = index2value(L, idx);
   switch (ttypetag(o)) {
     case LUA_VLCF: return cast_voidp(cast_sizet(fvalue(o)));
-    case LUA_VUSERDATA: case LUA_VLIGHTUSERDATA:
+    case LUA_VLIGHTUSERDATA:
+      return touserdata(o);  /* user-supplied pointer */
+    case LUA_VUSERDATA:
+#if LUASTASIS_DETERMINISTIC
+      /* full userdata is a GCObject; return its stable objid */
+      return cast_voidp((uintptr_t)gcvalue(o)->objid);
+#else
       return touserdata(o);
+#endif
     default: {
       if (iscollectable(o))
+#if LUASTASIS_DETERMINISTIC
+        return cast_voidp((uintptr_t)gcvalue(o)->objid);
+#else
         return gcvalue(o);
+#endif
       else
         return NULL;
     }

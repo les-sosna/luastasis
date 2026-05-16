@@ -217,7 +217,13 @@ static Node *mainpositionTV (const Table *t, const TValue *key) {
     }
     default: {
       GCObject *o = gcvalue(key);
+#if LUASTASIS_DETERMINISTIC
+      /* splitmix64-derived objid already mixes the per-state seed, so
+      ** using its low bits directly preserves HashDOS resistance. */
+      return hashmod(t, (unsigned int)o->objid);
+#else
       return hashpointer(t, o);
+#endif
     }
   }
 }

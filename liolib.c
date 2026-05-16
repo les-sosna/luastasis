@@ -178,7 +178,10 @@ static int f_tostring (lua_State *L) {
   if (isclosed(p))
     lua_pushliteral(L, "file (closed)");
   else
-    lua_pushfstring(L, "file (%p)", p->f);
+    /* In deterministic mode, lua_topointer returns the userdata's stable
+    ** objid rather than the FILE* address; the same string-format path
+    ** then yields reproducible output across runs. */
+    lua_pushfstring(L, "file (%p)", lua_topointer(L, 1));
   return 1;
 }
 
