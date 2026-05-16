@@ -71,11 +71,22 @@ CWARNS= $(CWARNSCPP) $(CWARNSC) $(CWARNGCC)
 LOCAL = $(TESTS) $(CWARNS)
 
 
+# LuaStasis: 'make DETERMINISTIC=1 ...' compiles with deterministic-mode
+# semantics enabled (Lua core changes + test polarity flip).  Off by
+# default — vanilla Lua behaviour.
+DETERMINISTIC?= 0
+ifeq ($(DETERMINISTIC),1)
+LSTASIS_FLAGS= -DLUASTASIS_DETERMINISTIC=1
+else
+LSTASIS_FLAGS=
+endif
+
+
 # To enable Linux goodies, -DLUA_USE_LINUX
 # For C89, "-std=c89 -DLUA_USE_C89"
 # Note that Linux/Posix options are not compatible with C89
 # (For 32-bit, add option "-m32" to MYCFLAGS and MYLDFLAGS.)
-MYCFLAGS= $(LOCAL) -std=c99 -DLUA_USE_LINUX
+MYCFLAGS= $(LOCAL) -std=c99 -DLUA_USE_LINUX $(LSTASIS_FLAGS)
 MYLDFLAGS= -Wl,-E
 MYLIBS= -ldl
 
