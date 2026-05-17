@@ -1129,7 +1129,6 @@ static void warnfon (void *ud, const char *message, int tocont) {
 
 
 
-#if !LUASTASIS_DETERMINISTIC
 /*
 ** A function to compute an unsigned int with some level of
 ** randomness. Rely on Address Space Layout Randomization (if present)
@@ -1176,7 +1175,6 @@ LUALIB_API unsigned int luaL_makeseed (lua_State *L) {
   UNUSED(L);
   return luai_makeseed();
 }
-#endif /* !LUASTASIS_DETERMINISTIC */
 
 
 /*

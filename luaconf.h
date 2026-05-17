@@ -24,6 +24,12 @@
 #define LUASTASIS_DETERMINISTIC		0
 #endif
 
+#if LUASTASIS_DETERMINISTIC
+/* Force the auxiliary library's seed source to a constant so callers
+** (including the test harness's luaL_newstate macro) always link. */
+#define luai_makeseed()		0u
+#endif
+
 
 /*
 ** ===================================================================

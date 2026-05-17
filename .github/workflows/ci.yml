@@ -18,11 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install build deps
-        run: sudo apt-get update && sudo apt-get install -y build-essential
+      - name: Build (${{ matrix.mode.name }}, full test mode + API checks)
+        run: |
+          make ${{ matrix.mode.flag }} \
+               TESTS='-DLUA_USER_H="\"ltests.h\"" -DLUA_USE_APICHECK -Og -g' \
+               lua test_serial test_determinism lstasis_tojson
 
-      - name: Build (${{ matrix.mode.name }})
-        run: make ${{ matrix.mode.flag }} lua test_serial test_determinism lstasis_tojson
+      - name: Build upstream test C libs
+        run: make -C testes/libs
 
       - name: LuaStasis serialization tests
         run: ./test_serial
@@ -30,17 +33,12 @@ jobs:
       - name: LuaStasis determinism tests
         run: ./test_determinism
 
-      - name: Upstream Lua test suite
+      - name: Upstream Lua test suite (full, with T library)
         working-directory: testes
-        # Run the test files that don't require the internal `T` library
-        # (which needs -DLUA_USER_H='"ltests.h"' at build time) and aren't
-        # tied to readline/standalone-interpreter shell quirks (main.lua).
+        # `echo |` ensures stdin is a non-seekable pipe (testes/files.lua
+        # depends on this).  PATH must include the freshly built lua so
+        # io.popen("lua ...") subprocesses in the suite resolve correctly.
         run: |
-          set -e
-          TESTS="calls closure goto literals locals constructs errors events \
-                 math sort vararg utf8 strings pm nextvar coroutine gc"
-          for f in $TESTS; do
-            echo "::group::$f.lua"
-            ../lua -e "_U=true; _port=true; _soft=true" -e "dofile('$f.lua')"
-            echo "::endgroup::"
-          done
+          ulimit -S -s 1100
+          export PATH="$PWD/..:$PATH"
+          echo | ../lua -W all.lua
