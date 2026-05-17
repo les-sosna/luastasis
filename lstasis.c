@@ -847,6 +847,11 @@ int lstasis_save(lua_State *L, const lstasis_Lib *libs,
 
   WBuf b; wb_init(&b);
   wb_u32(&b, s.num_objs);
+#if LUASTASIS_DETERMINISTIC
+  wb_u64(&b, (uint64_t)G(L)->next_seq);
+#else
+  wb_u64(&b, 0);  /* placeholder — only meaningful in deterministic mode */
+#endif
   for (uint32_t i = 0; i < s.num_objs; i++)
     write_obj(&b, &s, s.ordered[i]);
 
@@ -879,6 +884,7 @@ typedef struct {
   uint32_t    num_objects;
   void      **id_to_ptr;   /* id_to_ptr[id] for id in 1..num_objects */
   uint8_t    *obj_types;   /* obj_types[id-1] */
+  uint64_t   *obj_objids;  /* saved objid per object, applied after Pass 1 */
   size_t     *obj_offsets; /* start of each object's data in rb */
   lua_State  *L;           /* the new state being built */
   uint32_t    main_thread_id;
@@ -1195,17 +1201,19 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   d.rb.size = size;
   cfrev_init(&d.cfrev);
 
-  if (!rb_ok(&d.rb, 4)) return NULL;
+  if (!rb_ok(&d.rb, 4 + 8)) return NULL;
   d.num_objects = rb_u32(&d.rb);
+  uint64_t saved_next_seq = rb_u64(&d.rb);
 
-  d.obj_types   = (uint8_t *)malloc(d.num_objects);
+  d.obj_types   = (uint8_t  *)malloc(d.num_objects);
+  d.obj_objids  = (uint64_t *)malloc(d.num_objects * sizeof(uint64_t));
   d.obj_offsets = (size_t   *)malloc(d.num_objects * sizeof(size_t));
-  if (!d.obj_types || !d.obj_offsets) goto fail_pre;
+  if (!d.obj_types || !d.obj_objids || !d.obj_offsets) goto fail_pre;
 
   for (uint32_t i = 0; i < d.num_objects; i++) {
     if (!rb_ok(&d.rb, 1 + 8 + 4)) goto fail_pre;
     d.obj_types[i]   = rb_u8(&d.rb);
-    (void)rb_u64(&d.rb);  /* objid — skipped here; restored in step 5 */
+    d.obj_objids[i]  = rb_u64(&d.rb);
     uint32_t dsz     = rb_u32(&d.rb);
     d.obj_offsets[i] = d.rb.pos;
     d.rb.pos        += dsz;
@@ -1316,6 +1324,20 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
     }
   }
 
+#if LUASTASIS_DETERMINISTIC
+  /* ----------------------------------------------------------------
+  ** Pass 1.5: restore each object's saved objid BEFORE any pass that
+  ** hashes by objid (notably Pass 2e, which inserts into tables).
+  ** luaC_newobj assigned each newly-created object a fresh objid as a
+  ** side effect of allocation; we now overwrite with the value from
+  ** the buffer so the loaded state matches the saved state exactly.
+  ** -------------------------------------------------------------- */
+  for (uint32_t i = 0; i < d.num_objects; i++) {
+    GCObject *o = (GCObject *)d.id_to_ptr[i + 1];
+    if (o) o->objid = (size_t)d.obj_objids[i];
+  }
+#endif
+
   /* ----------------------------------------------------------------
   ** Pass 2a: fill protos
   ** -------------------------------------------------------------- */
@@ -1388,12 +1410,21 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   for (int i = 0; i < LUA_NUMTYPES; i++)
     G(L)->mt[i] = mt_ids[i] ? (Table *)d.id_to_ptr[mt_ids[i]] : NULL;
 
+#if LUASTASIS_DETERMINISTIC
+  /* Resume the allocation counter where the saved state left off, so
+  ** new GCObjects allocated post-load get objids that continue the
+  ** original sequence (won't collide with any restored objid because
+  ** splitmix64 is bijective on the sequence input). */
+  G(L)->next_seq = (size_t)saved_next_seq;
+#endif
+
   lua_gc(L, LUA_GCRESTART, 0);
   lua_gc(L, LUA_GCCOLLECT, 0);
 
   cfrev_free(&d.cfrev);
   free(d.id_to_ptr);
   free(d.obj_types);
+  free(d.obj_objids);
   free(d.obj_offsets);
   return L;
 
@@ -1402,6 +1433,7 @@ fail_L:
 fail_pre:
   cfrev_free(&d.cfrev);
   free(d.obj_types);
+  free(d.obj_objids);
   free(d.obj_offsets);
   free(d.id_to_ptr);
   return NULL;

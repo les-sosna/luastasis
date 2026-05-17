@@ -720,20 +720,25 @@ static void test_save_preserves_state(void) {
 ** below is built piecewise so both modes can share it. */
 #if LUASTASIS_DETERMINISTIC
 /* splitmix64 outputs for seq={1,2,3}, seed=0 — main thread is allocated
-** first (seq=1) but discovered second (registry is the entry root). */
+** first (seq=1) but discovered second (registry is the entry root).
+** next_seq is the saved-state's allocation counter at save time; it
+** reflects every GCObject the runtime created during state setup. */
 #define GOLDEN_OBJID_MAIN  "0x5692161d100b05e5"   /* seq=1 (main thread) */
 #define GOLDEN_OBJID_REG   "0xdbd238973a2b148a"   /* seq=2 (registry)    */
 #define GOLDEN_OBJID_GLOB  "0x1e535eede31428f0"   /* seq=3 (_G table)    */
+#define GOLDEN_NEXT_SEQ    "0x0000000000000035"   /* all GCObjs created in state setup */
 #else
 #define GOLDEN_OBJID_MAIN  "0x0000000000000000"
 #define GOLDEN_OBJID_REG   "0x0000000000000000"
 #define GOLDEN_OBJID_GLOB  "0x0000000000000000"
+#define GOLDEN_NEXT_SEQ    "0x0000000000000000"
 #endif
 
 static const char GOLDEN_EMPTY_STATE[] =
   "{\n"
   "  \"format\": \"luaser\",\n"
   "  \"num_objects\": 3,\n"
+  "  \"next_seq\": \"" GOLDEN_NEXT_SEQ "\",\n"
   "  \"roots\": {\n"
   "    \"registry\": 1,\n"
   "    \"main_thread\": 2,\n"

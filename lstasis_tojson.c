@@ -417,6 +417,7 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
   g_out = out;
 
   uint32_t num_objects = rb_u32(&rb);
+  uint64_t next_seq    = rb_u64(&rb);
   if (rb.err) { fprintf(stderr, "lstasis_tojson: truncated header\n"); return 1; }
 
   /* Index pass: record type code, objid, and data offset for each object. */
@@ -457,6 +458,8 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
 
   jkey("format"); fputs("\"luaser\",", g_out);
   jkey("num_objects"); fprintf(g_out, "%u,", num_objects);
+  jkey("next_seq");
+  fprintf(g_out, "\"0x%016" PRIx64 "\",", next_seq);
 
   jkey("roots"); fputs("{", g_out);
   g_depth++;
