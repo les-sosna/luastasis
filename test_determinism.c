@@ -241,6 +241,21 @@ static void test_pairs_table_keys(void) {
     "io.write(table.concat(o, \",\"))");
 }
 
+static void test_pairs_cfunction_keys(void) {
+  printf("\n== pairs() on C-function keys ==\n");
+  /* In vanilla Lua, lua_pushcfunction with no upvalues stores a light C
+  ** function whose address varies with ASLR — using one as a table key
+  ** gives ASLR-dependent hash positions.  In deterministic mode every
+  ** C function is allocated as a CClosure with a stable objid, so the
+  ** iteration order is reproducible across processes. */
+  check_three_subproc("pairs(cfunction keys)", CAT_NONDET,
+    "local t = { [print]=1, [tostring]=2, [tonumber]=3, [pairs]=4, "
+    "            [next]=5, [type]=6, [error]=7, [assert]=8 } "
+    "local o = {} "
+    "for _, v in pairs(t) do o[#o+1] = tostring(v) end "
+    "io.write(table.concat(o, \",\"))");
+}
+
 static void test_pairs_mixed_keys(void) {
   printf("\n== pairs() on mixed non-string keys ==\n");
   check_three_subproc("pairs(mixed w/ table keys)", CAT_NONDET,
@@ -409,6 +424,7 @@ int main(void) {
   test_pairs_string_keys();
   test_next_string_keys();
   test_pairs_table_keys();
+  test_pairs_cfunction_keys();
   test_pairs_mixed_keys();
   test_math_random();
 

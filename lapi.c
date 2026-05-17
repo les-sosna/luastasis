@@ -619,11 +619,17 @@ LUA_API const char *lua_pushfstring (lua_State *L, const char *fmt, ...) {
 
 LUA_API void lua_pushcclosure (lua_State *L, lua_CFunction fn, int n) {
   lua_lock(L);
+#if !LUASTASIS_DETERMINISTIC
+  /* Vanilla fast path: n=0 leaves the function as a light C function
+  ** stored directly in a TValue.  Deterministic mode skips this so
+  ** every callable becomes a GCObject with a stable objid. */
   if (n == 0) {
     setfvalue(s2v(L->top.p), fn);
     api_incr_top(L);
   }
-  else {
+  else
+#endif
+  {
     int i;
     CClosure *cl;
     api_checkpop(L, n);
