@@ -360,9 +360,12 @@ static void test_sanity_arithmetic(void) {
   printf("\n== sanity: integer / float arithmetic ==\n");
   /* Numeric ops are reproducible; baseline that fails loudly if the
   ** harness itself breaks. */
+  /* Use \" (Lua double-quoted strings) instead of '..';'..' — single
+  ** quotes inside the snippet would break the surrounding shell-quoted
+  ** -e argument and the test would silently evaluate to a shell error. */
   check_three_subproc("arithmetic operations", CAT_SANITY,
-    "io.write(tostring(1 + 2 * 3 - 4 // 2)..';'.."
-    "         tostring(math.pi * 2)..';'..tostring(2^10))");
+    "io.write(tostring(1 + 2 * 3 - 4 // 2)..\";\".."
+    "         tostring(math.pi * 2)..\";\"..tostring(2^10))");
 }
 
 /* ======================================================================

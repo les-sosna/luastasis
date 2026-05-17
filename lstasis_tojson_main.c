@@ -1,6 +1,6 @@
 /*
 ** lstasis_tojson_main.c
-** CLI entry point for the luaser-to-JSON converter.
+** CLI entry point for the lstasis-to-JSON converter.
 **
 ** Usage:  lstasis_tojson <file.bin>
 **         lstasis_tojson < file.bin

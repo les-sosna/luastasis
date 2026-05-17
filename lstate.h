@@ -340,9 +340,11 @@ typedef struct global_State {
   /* LuaStasis: cache of CClosures created for raw lua_CFunction values
   ** (det mode replaces light-C-function pushes with a fixed CClosure).
   ** Each unique lua_CFunction is allocated exactly once per state; the
-  ** CClosure lives in this table (pinned via fixedgc) and is reused on
-  ** every subsequent push.  Keys are light userdata wrapping the fn
-  ** pointer; values are the CClosure. */
+  ** CClosure lives in this table and is reused on every subsequent
+  ** push.  The table itself, and transitively all CClosure entries it
+  ** holds, is kept alive across collections by an explicit markobject
+  ** in restartcollection / atomic (see lgc.c).  Keys are light userdata
+  ** wrapping the fn pointer; values are the CClosure. */
   struct Table *lcf_cache;
 #endif
   lu_byte gcparams[LUA_GCPN];

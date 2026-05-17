@@ -416,26 +416,41 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
   RBuf rb = { (const uint8_t *)buf, 0, sz, 0 };
   g_out = out;
 
-  uint32_t num_objects = rb_u32(&rb);
-  uint64_t next_seq    = rb_u64(&rb);
+  /* Format: [next_seq:u64] {objects...} [registry:u32 main:u32
+  ** mt:u32×LUA_NUMTYPES].  Objects span byte 8 → (size - footer). */
+  const size_t header_size = 8;
+  const size_t footer_size = (size_t)(4 + 4 + LUA_NUMTYPES * 4);
+  if (rb.size < header_size + footer_size) {
+    fprintf(stderr, "lstasis_tojson: buffer too small for header+footer\n");
+    return 1;
+  }
+  size_t objects_end = rb.size - footer_size;
+
+  uint64_t next_seq = rb_u64(&rb);
   if (rb.err) { fprintf(stderr, "lstasis_tojson: truncated header\n"); return 1; }
 
-  /* Index pass: record type code, objid, and data offset for each object. */
-  uint8_t  *types   = (uint8_t  *)calloc(num_objects, sizeof(uint8_t));
-  uint64_t *objids  = (uint64_t *)calloc(num_objects, sizeof(uint64_t));
-  size_t   *offsets = (size_t   *)calloc(num_objects, sizeof(size_t));
+  /* Index pass: record type code, objid, and data offset for each object.
+  ** Conservative pre-allocation by min header size (13 bytes). */
+  size_t max_objects = (objects_end - rb.pos) / 13;
+  if (max_objects == 0) max_objects = 1;
+  uint8_t  *types   = (uint8_t  *)calloc(max_objects, sizeof(uint8_t));
+  uint64_t *objids  = (uint64_t *)calloc(max_objects, sizeof(uint64_t));
+  size_t   *offsets = (size_t   *)calloc(max_objects, sizeof(size_t));
   if (!types || !objids || !offsets) {
     fprintf(stderr, "lstasis_tojson: out of memory\n");
     free(types); free(objids); free(offsets); return 1;
   }
 
-  for (uint32_t i = 0; i < num_objects; i++) {
+  uint32_t num_objects = 0;
+  while (rb.pos < objects_end) {
     if (rb.err) break;
-    types[i]    = rb_u8(&rb);
-    objids[i]   = rb_u64(&rb);
-    uint32_t dsz = rb_u32(&rb);
-    offsets[i]  = rb.pos;
-    rb.pos     += dsz;
+    types[num_objects]    = rb_u8(&rb);
+    objids[num_objects]   = rb_u64(&rb);
+    uint32_t dsz           = rb_u32(&rb);
+    offsets[num_objects]  = rb.pos;
+    rb.pos               += dsz;
+    if (rb.pos > objects_end) { rb.err = 1; break; }
+    num_objects++;
   }
   if (rb.err) {
     fprintf(stderr, "lstasis_tojson: truncated object table\n");
@@ -456,7 +471,7 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
   fputc('{', g_out);
   g_depth = 1;
 
-  jkey("format"); fputs("\"luaser\",", g_out);
+  jkey("format"); fputs("\"lstasis\",", g_out);
   jkey("num_objects"); fprintf(g_out, "%u,", num_objects);
   jkey("next_seq");
   fprintf(g_out, "\"0x%016" PRIx64 "\",", next_seq);

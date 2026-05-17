@@ -846,7 +846,11 @@ int lstasis_save(lua_State *L, const lstasis_Lib *libs,
   discover_all(&s, L);
 
   WBuf b; wb_init(&b);
-  wb_u32(&b, s.num_objs);
+  /* Header: [next_seq:u64].  Objects fill the space between the header
+  ** and the fixed-size roots footer; the loader derives the object
+  ** count and section bounds from the buffer size and footer size, so
+  ** no attacker-supplied count needs validation and index arrays can
+  ** be sized once with no live reallocations. */
 #if LUASTASIS_DETERMINISTIC
   wb_u64(&b, (uint64_t)G(L)->next_seq);
 #else
@@ -1201,22 +1205,37 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   d.rb.size = size;
   cfrev_init(&d.cfrev);
 
-  if (!rb_ok(&d.rb, 4 + 8)) return NULL;
-  d.num_objects = rb_u32(&d.rb);
+  /* Format: [next_seq:u64] {objects...} [registry:u32 main:u32
+  ** mt:u32×LUA_NUMTYPES].  The roots footer is fixed-size, so the
+  ** object section is everything between byte 8 and (size - footer). */
+  const size_t header_size = 8;  /* next_seq */
+  const size_t footer_size = (size_t)(4 + 4 + LUA_NUMTYPES * 4);
+  if (size < header_size + footer_size) return NULL;
+  size_t objects_end = size - footer_size;
+
+  if (!rb_ok(&d.rb, header_size)) return NULL;
   uint64_t saved_next_seq = rb_u64(&d.rb);
 
-  d.obj_types   = (uint8_t  *)malloc(d.num_objects);
-  d.obj_objids  = (uint64_t *)malloc(d.num_objects * sizeof(uint64_t));
-  d.obj_offsets = (size_t   *)malloc(d.num_objects * sizeof(size_t));
+  /* Each object header is at least 1+8+4 = 13 bytes (type, objid, size).
+  ** This bounds how many objects can fit and is what we allocate the
+  ** index arrays for — one malloc each, no growth. */
+  size_t max_objects = (objects_end - d.rb.pos) / 13;
+  if (max_objects == 0) max_objects = 1;
+  d.obj_types   = (uint8_t  *)malloc(max_objects);
+  d.obj_objids  = (uint64_t *)malloc(max_objects * sizeof(uint64_t));
+  d.obj_offsets = (size_t   *)malloc(max_objects * sizeof(size_t));
   if (!d.obj_types || !d.obj_objids || !d.obj_offsets) goto fail_pre;
 
-  for (uint32_t i = 0; i < d.num_objects; i++) {
+  d.num_objects = 0;
+  while (d.rb.pos < objects_end) {
     if (!rb_ok(&d.rb, 1 + 8 + 4)) goto fail_pre;
-    d.obj_types[i]   = rb_u8(&d.rb);
-    d.obj_objids[i]  = rb_u64(&d.rb);
-    uint32_t dsz     = rb_u32(&d.rb);
-    d.obj_offsets[i] = d.rb.pos;
-    d.rb.pos        += dsz;
+    d.obj_types[d.num_objects]   = rb_u8(&d.rb);
+    d.obj_objids[d.num_objects]  = rb_u64(&d.rb);
+    uint32_t dsz                  = rb_u32(&d.rb);
+    d.obj_offsets[d.num_objects] = d.rb.pos;
+    if ((size_t)dsz > objects_end - d.rb.pos) goto fail_pre;
+    d.rb.pos                     += dsz;
+    d.num_objects++;
   }
 
   if (!rb_ok(&d.rb, (4 + 4 + LUA_NUMTYPES * 4))) goto fail_pre;

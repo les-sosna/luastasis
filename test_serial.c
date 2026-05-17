@@ -736,7 +736,7 @@ static void test_save_preserves_state(void) {
 
 static const char GOLDEN_EMPTY_STATE[] =
   "{\n"
-  "  \"format\": \"luaser\",\n"
+  "  \"format\": \"lstasis\",\n"
   "  \"num_objects\": 3,\n"
   "  \"next_seq\": \"" GOLDEN_NEXT_SEQ "\",\n"
   "  \"roots\": {\n"
