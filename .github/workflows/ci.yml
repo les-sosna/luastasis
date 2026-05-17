@@ -16,7 +16,7 @@ jobs:
           - { name: deterministic, flag: "DETERMINISTIC=1" }
     name: ${{ matrix.mode.name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install build deps
         run: sudo apt-get update && sudo apt-get install -y build-essential

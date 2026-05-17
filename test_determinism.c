@@ -51,13 +51,15 @@ static lua_State *new_state(void) {
 }
 
 static char *eval(lua_State *L, const char *code) {
+  const char *s;
+  char *r;
   if (luaL_dostring(L, code) != LUA_OK) {
     fprintf(stderr, "lua error: %s\n", lua_tostring(L, -1));
     lua_pop(L, 1);
     return NULL;
   }
-  const char *s = lua_tostring(L, -1);
-  char *r = s ? strdup(s) : NULL;
+  s = lua_tostring(L, -1);
+  r = s ? strdup(s) : NULL;
   lua_pop(L, 1);
   return r;
 }
@@ -79,14 +81,15 @@ static void run_two_states(const char *code, char **a, char **b) {
 static char *run_subproc(const char *lua_code) {
   /* Snippets are author-controlled; they contain no single quotes. */
   char cmd[4096];
-  snprintf(cmd, sizeof(cmd), "./lua -e '%s' 2>&1", lua_code);
-  FILE *p = popen(cmd, "r");
-  if (!p) return NULL;
-
+  FILE *p;
   size_t cap = 1024, len = 0;
-  char *out = (char *)malloc(cap);
-  out[0] = '\0';
+  char *out;
   int c;
+  snprintf(cmd, sizeof(cmd), "./lua -e '%s' 2>&1", lua_code);
+  p = popen(cmd, "r");
+  if (!p) return NULL;
+  out = (char *)malloc(cap);
+  out[0] = '\0';
   while ((c = fgetc(p)) != EOF) {
     if (len + 1 >= cap) { cap *= 2; out = (char *)realloc(out, cap); }
     out[len++] = (char)c;
@@ -124,13 +127,14 @@ static const char *mode_label(void) {
 ** outputs were collected (2 coexisting states vs N subprocesses). */
 static void report(const char *name, category_t cat, int observed_differ) {
   int want_differ;
+  int ok;
   switch (cat) {
     case CAT_NONDET:   want_differ = !LUASTASIS_DETERMINISTIC; break;
     case CAT_SANITY:   want_differ = 0; break;
     case CAT_ENV_LEAK: want_differ = 1; break;
     default:           want_differ = 0; break;
   }
-  int ok = (observed_differ == want_differ);
+  ok = (observed_differ == want_differ);
   printf("  %s: %s [%s, %s mode → outputs should %s]\n",
          ok ? "PASS" : "FAIL", name, cat_label(cat), mode_label(),
          want_differ ? "differ" : "be identical");
@@ -144,10 +148,11 @@ static void report(const char *name, category_t cat, int observed_differ) {
 static void check_two_states(const char *name, category_t cat,
                              const char *code) {
   char *a, *b;
+  int differ;
   run_two_states(code, &a, &b);
   printf("    run A: %s\n", a ? a : "(null)");
   printf("    run B: %s\n", b ? b : "(null)");
-  int differ = (a && b && a[0] && b[0] && strcmp(a, b) != 0);
+  differ = (a && b && a[0] && b[0] && strcmp(a, b) != 0);
   report(name, cat, differ);
   free(a); free(b);
 }
@@ -158,16 +163,18 @@ static void check_two_states(const char *name, category_t cat,
 ** pair differs; "deterministic" = ALL three are identical. */
 static void check_three_subproc(const char *name, category_t cat,
                                 const char *code) {
-  char *a = run_subproc(code);
-  char *b = run_subproc(code);
-  char *c = run_subproc(code);
+  char *a, *b, *c;
+  int differ_ab, differ_ac, differ_bc, differ;
+  a = run_subproc(code);
+  b = run_subproc(code);
+  c = run_subproc(code);
   printf("    run A: %s\n", a ? a : "(null)");
   printf("    run B: %s\n", b ? b : "(null)");
   printf("    run C: %s\n", c ? c : "(null)");
-  int differ_ab = (a && b && strcmp(a, b) != 0);
-  int differ_ac = (a && c && strcmp(a, c) != 0);
-  int differ_bc = (b && c && strcmp(b, c) != 0);
-  int differ = differ_ab || differ_ac || differ_bc;
+  differ_ab = (a && b && strcmp(a, b) != 0);
+  differ_ac = (a && c && strcmp(a, c) != 0);
+  differ_bc = (b && c && strcmp(b, c) != 0);
+  differ = differ_ab || differ_ac || differ_bc;
   report(name, cat, differ);
   free(a); free(b); free(c);
 }
@@ -373,27 +380,32 @@ static void test_sanity_arithmetic(void) {
 ** ==================================================================== */
 
 static void test_env_os_clock_progresses(void) {
+  lua_State *L;
+  char *r;
+  int ok;
   printf("\n== env-leak: os.clock() within run ==\n");
   /* CPU clock advancing during a single run; observed once. */
-  lua_State *L = new_state();
-  char *r = eval(L,
+  L = new_state();
+  r = eval(L,
     "local t0 = os.clock() "
     "local s = 0 for i = 1, 5000000 do s = s + i end "
     "local t1 = os.clock() "
     "return (t1 > t0) and 'advanced' or 'stuck'");
   printf("    observed: %s\n", r ? r : "(null)");
-  int ok = (r && strcmp(r, "advanced") == 0);
+  ok = (r && strcmp(r, "advanced") == 0);
   printf("  %s: os.clock() advances [env-leak]\n", ok ? "PASS" : "FAIL");
   free(r);
   lua_close(L);
 }
 
 static void test_env_os_time_real(void) {
+  lua_State *L;
+  char *r;
   printf("\n== env-leak: os.time() ==\n");
   /* Wall clock; observed once.  No two-run comparison because two
   ** subprocess invocations typically fall in the same second. */
-  lua_State *L = new_state();
-  char *r = eval(L, "return tostring(os.time())");
+  L = new_state();
+  r = eval(L, "return tostring(os.time())");
   printf("    os.time(): %s\n", r ? r : "(null)");
   printf("  PASS: os.time() reflects wall clock [env-leak]\n");
   free(r);
@@ -405,14 +417,14 @@ static void test_env_os_time_real(void) {
 ** -------------------------------------------------------------------- */
 
 int main(void) {
+  FILE *f;
   printf("=== LuaStasis Determinism Tests ===\n");
   printf("Build mode: %s%s\n", mode_label(),
          LUASTASIS_DETERMINISTIC
            ? " (expect non-det sources to be silenced)"
            : " (expect non-det sources to be observable)");
   printf("\n");
-
-  FILE *f = fopen("./lua", "rb");
+  f = fopen("./lua", "rb");
   if (!f) {
     fprintf(stderr, "error: ./lua not found — run 'make lua' first\n");
     return 1;

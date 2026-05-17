@@ -114,8 +114,9 @@ static void jkey(const char *k) {
 
 /* Emit one TValue from the stream as a JSON value. */
 static void jtv(RBuf *rb) {
+  uint8_t tag;
   if (rb->err) { fputs("null", g_out); return; }
-  uint8_t tag = rb_u8(rb);
+  tag = rb_u8(rb);
   if (rb->err) { fputs("null", g_out); return; }
 
   if (tag == CFUNC_TAG) {
@@ -170,6 +171,7 @@ static void dump_string(RBuf *rb) {
 }
 
 static void dump_table(RBuf *rb) {
+  uint32_t mt;
   uint32_t cnt = rb_u32(rb);
   fprintf(g_out, ", \"entry_count\":%u", cnt);
   fputs(", \"entries\":[", g_out);
@@ -187,7 +189,7 @@ static void dump_table(RBuf *rb) {
   if (cnt > 0) jnl();
   fputc(']', g_out);
 
-  uint32_t mt = rb_u32(rb);
+  mt = rb_u32(rb);
   if (mt) fprintf(g_out, ", \"metatable\":%u", mt);
   else fputs(", \"metatable\":null", g_out);
 
@@ -195,17 +197,27 @@ static void dump_table(RBuf *rb) {
 }
 
 static void dump_proto(RBuf *rb) {
+  int32_t lld;
+  int32_t ld;
+  uint32_t ncode;
+  uint32_t nk;
+  uint32_t np;
+  uint32_t nuv;
+  uint32_t nline;
+  uint32_t nabsl;
+  uint32_t nloc;
+  uint32_t src;
   uint8_t params  = rb_u8(rb);
   uint8_t flag    = rb_u8(rb);
   uint8_t maxstk  = rb_u8(rb);
   fprintf(g_out, ", \"params\":%u, \"is_vararg\":%s, \"max_stack\":%u",
          params, (flag & LPF_ISVARARG) ? "true" : "false", maxstk);
 
-  uint32_t ncode = rb_u32(rb);
+  ncode = rb_u32(rb);
   fprintf(g_out, ", \"num_instructions\":%u", ncode);
   rb_skip(rb, (size_t)ncode * INSTR_SZ);
 
-  uint32_t nk = rb_u32(rb);
+  nk = rb_u32(rb);
   fputs(", \"constants\":[", g_out);
   for (uint32_t i = 0; i < nk; i++) {
     if (i > 0) fputc(',', g_out);
@@ -214,25 +226,28 @@ static void dump_proto(RBuf *rb) {
   }
   fputc(']', g_out);
 
-  uint32_t np = rb_u32(rb);
+  np = rb_u32(rb);
   fputs(", \"sub_protos\":[", g_out);
   for (uint32_t i = 0; i < np; i++) {
+    uint32_t id;
     if (i > 0) fputc(',', g_out);
-    uint32_t id = rb_u32(rb);
+    id = rb_u32(rb);
     if (id) fprintf(g_out, "%u", id); else fputs("null", g_out);
   }
   fputc(']', g_out);
 
-  uint32_t nuv = rb_u32(rb);
+  nuv = rb_u32(rb);
   fputs(", \"upvalues\":[", g_out);
   g_depth++;
   for (uint32_t i = 0; i < nuv; i++) {
+    uint32_t nid;
+    uint8_t ins, idx, knd;
     if (i > 0) fputc(',', g_out);
     jnl();
-    uint32_t nid = rb_u32(rb);
-    uint8_t  ins = rb_u8(rb);
-    uint8_t  idx = rb_u8(rb);
-    uint8_t  knd = rb_u8(rb);
+    nid = rb_u32(rb);
+    ins = rb_u8(rb);
+    idx = rb_u8(rb);
+    knd = rb_u8(rb);
     fputs("{\"name\":", g_out);
     if (nid) fprintf(g_out, "{\"ref\":%u}", nid); else fputs("null", g_out);
     fprintf(g_out, ", \"instack\":%u, \"idx\":%u, \"kind\":%u}", ins, idx, knd);
@@ -241,20 +256,22 @@ static void dump_proto(RBuf *rb) {
   if (nuv > 0) jnl();
   fputc(']', g_out);
 
-  uint32_t nline = rb_u32(rb);
+  nline = rb_u32(rb);
   rb_skip(rb, nline);                               /* lineinfo: 1 byte each */
-  uint32_t nabsl = rb_u32(rb);
+  nabsl = rb_u32(rb);
   rb_skip(rb, (size_t)nabsl * ABSLINE_SZ);          /* abslineinfo */
 
-  uint32_t nloc = rb_u32(rb);
+  nloc = rb_u32(rb);
   fputs(", \"locvars\":[", g_out);
   g_depth++;
   for (uint32_t i = 0; i < nloc; i++) {
+    int32_t epc, spc;
+    uint32_t vid;
     if (i > 0) fputc(',', g_out);
     jnl();
-    uint32_t vid = rb_u32(rb);
-    int32_t  spc = rb_i32(rb);
-    int32_t  epc = rb_i32(rb);
+    vid = rb_u32(rb);
+    spc = rb_i32(rb);
+    epc = rb_i32(rb);
     fputs("{\"name\":", g_out);
     if (vid) fprintf(g_out, "{\"ref\":%u}", vid); else fputs("null", g_out);
     fprintf(g_out, ", \"startpc\":%d, \"endpc\":%d}", spc, epc);
@@ -263,30 +280,33 @@ static void dump_proto(RBuf *rb) {
   if (nloc > 0) jnl();
   fputc(']', g_out);
 
-  uint32_t src = rb_u32(rb);
-  int32_t  ld  = rb_i32(rb);
-  int32_t  lld = rb_i32(rb);
+  src = rb_u32(rb);
+  ld = rb_i32(rb);
+  lld = rb_i32(rb);
   fputs(", \"source\":", g_out);
   if (src) fprintf(g_out, "{\"ref\":%u}", src); else fputs("null", g_out);
   fprintf(g_out, ", \"line_defined\":%d, \"last_line_defined\":%d", ld, lld);
 }
 
 static void dump_lclosure(RBuf *rb) {
+  uint8_t nuv;
   uint32_t pid = rb_u32(rb);
   fputs(", \"proto\":", g_out);
   if (pid) fprintf(g_out, "%u", pid); else fputs("null", g_out);
 
-  uint8_t nuv = rb_u8(rb);
+  nuv = rb_u8(rb);
   fputs(", \"upvalues\":[", g_out);
   for (int i = 0; i < (int)nuv; i++) {
+    uint32_t uid;
     if (i > 0) fputc(',', g_out);
-    uint32_t uid = rb_u32(rb);
+    uid = rb_u32(rb);
     if (uid) fprintf(g_out, "%u", uid); else fputs("null", g_out);
   }
   fputc(']', g_out);
 }
 
 static void dump_cclosure(RBuf *rb) {
+  uint8_t nuv;
   uint8_t tag = rb_u8(rb);
   fputs(", \"func\":", g_out);
   if (tag == CFUNC_TAG) {
@@ -298,7 +318,7 @@ static void dump_cclosure(RBuf *rb) {
     fputs("null", g_out);
   }
 
-  uint8_t nuv = rb_u8(rb);
+  nuv = rb_u8(rb);
   fputs(", \"upvalues\":[", g_out);
   g_depth++;
   for (int i = 0; i < (int)nuv; i++) {
@@ -330,6 +350,8 @@ static const char *thread_status_name(uint8_t s) {
 }
 
 static void dump_thread(RBuf *rb) {
+  int32_t nci;
+  uint32_t nopen;
   uint8_t  status = rb_u8(rb);
   int32_t  nstack = rb_i32(rb);
   fprintf(g_out, ", \"status\":%u, \"status_name\":\"%s\", \"stack_size\":%d",
@@ -346,17 +368,22 @@ static void dump_thread(RBuf *rb) {
   if (nstack > 0) jnl();
   fputc(']', g_out);
 
-  int32_t nci = rb_i32(rb);
+  nci = rb_i32(rb);
   fprintf(g_out, ", \"num_callinfos\":%d, \"callinfos\":[", nci);
   g_depth++;
   for (int32_t j = 0; j < nci; j++) {
+    uint32_t cstat;
+    int32_t toff;
+    int32_t foff;
+    uint8_t is_lua;
+    int32_t u2v;
     if (j > 0) fputc(',', g_out);
     jnl();
-    uint8_t  is_lua = rb_u8(rb);
-    int32_t  foff   = rb_i32(rb);
-    int32_t  toff   = rb_i32(rb);
-    uint32_t cstat  = rb_u32(rb);
-    int32_t  u2v    = rb_i32(rb); (void)u2v;
+    is_lua = rb_u8(rb);
+    foff = rb_i32(rb);
+    toff = rb_i32(rb);
+    cstat = rb_u32(rb);
+    u2v = rb_i32(rb); (void)u2v;
     fprintf(g_out, "{\"is_lua\":%s, \"func_slot\":%d, \"top_slot\":%d, \"callstatus\":%u",
            is_lua ? "true" : "false", foff, toff, cstat);
     if (is_lua) {
@@ -374,12 +401,14 @@ static void dump_thread(RBuf *rb) {
   if (nci > 0) jnl();
   fputc(']', g_out);
 
-  uint32_t nopen = rb_u32(rb);
+  nopen = rb_u32(rb);
   fputs(", \"open_upvalues\":[", g_out);
   for (uint32_t i = 0; i < nopen; i++) {
+    int32_t soff;
+    uint32_t uid;
     if (i > 0) fputc(',', g_out);
-    uint32_t uid  = rb_u32(rb);
-    int32_t  soff = rb_i32(rb);
+    uid = rb_u32(rb);
+    soff = rb_i32(rb);
     fprintf(g_out, "{\"id\":%u, \"stack_offset\":%d}", uid, soff);
     if (rb->err) break;
   }
@@ -413,40 +442,53 @@ static int obj_is_single_line(uint8_t t) {
 ** Public API
 ** ----------------------------------------------------------------------- */
 int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
+  size_t header_size;
+  size_t footer_size;
+  size_t objects_end;
+  size_t max_objects;
+  uint8_t *types;
+  uint64_t *objids;
+  size_t *offsets;
+  uint64_t next_seq;
+  uint32_t num_objects;
+  uint32_t registry_id;
+  uint32_t main_thread_id;
+  uint32_t mt_ids[LUA_NUMTYPES];
   RBuf rb = { (const uint8_t *)buf, 0, sz, 0 };
   g_out = out;
 
   /* Format: [next_seq:u64] {objects...} [registry:u32 main:u32
   ** mt:u32×LUA_NUMTYPES].  Objects span byte 8 → (size - footer). */
-  const size_t header_size = 8;
-  const size_t footer_size = (size_t)(4 + 4 + LUA_NUMTYPES * 4);
+  header_size = 8;
+  footer_size = (size_t)(4 + 4 + LUA_NUMTYPES * 4);
   if (rb.size < header_size + footer_size) {
     fprintf(stderr, "lstasis_tojson: buffer too small for header+footer\n");
     return 1;
   }
-  size_t objects_end = rb.size - footer_size;
+  objects_end = rb.size - footer_size;
 
-  uint64_t next_seq = rb_u64(&rb);
+  next_seq = rb_u64(&rb);
   if (rb.err) { fprintf(stderr, "lstasis_tojson: truncated header\n"); return 1; }
 
   /* Index pass: record type code, objid, and data offset for each object.
   ** Conservative pre-allocation by min header size (13 bytes). */
-  size_t max_objects = (objects_end - rb.pos) / 13;
+  max_objects = (objects_end - rb.pos) / 13;
   if (max_objects == 0) max_objects = 1;
-  uint8_t  *types   = (uint8_t  *)calloc(max_objects, sizeof(uint8_t));
-  uint64_t *objids  = (uint64_t *)calloc(max_objects, sizeof(uint64_t));
-  size_t   *offsets = (size_t   *)calloc(max_objects, sizeof(size_t));
+  types   = (uint8_t  *)calloc(max_objects, sizeof(uint8_t));
+  objids  = (uint64_t *)calloc(max_objects, sizeof(uint64_t));
+  offsets = (size_t   *)calloc(max_objects, sizeof(size_t));
   if (!types || !objids || !offsets) {
     fprintf(stderr, "lstasis_tojson: out of memory\n");
     free(types); free(objids); free(offsets); return 1;
   }
 
-  uint32_t num_objects = 0;
+  num_objects = 0;
   while (rb.pos < objects_end) {
+    uint32_t dsz;
     if (rb.err) break;
     types[num_objects]    = rb_u8(&rb);
     objids[num_objects]   = rb_u64(&rb);
-    uint32_t dsz           = rb_u32(&rb);
+    dsz = rb_u32(&rb);
     offsets[num_objects]  = rb.pos;
     rb.pos               += dsz;
     if (rb.pos > objects_end) { rb.err = 1; break; }
@@ -461,9 +503,8 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
     free(types); free(objids); free(offsets); return 1;
   }
 
-  uint32_t registry_id    = rb_u32(&rb);
-  uint32_t main_thread_id = rb_u32(&rb);
-  uint32_t mt_ids[LUA_NUMTYPES];
+  registry_id = rb_u32(&rb);
+  main_thread_id = rb_u32(&rb);
   for (int i = 0; i < LUA_NUMTYPES; i++) mt_ids[i] = rb_u32(&rb);
 
   /* Emit JSON. */

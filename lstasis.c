@@ -139,6 +139,17 @@ static lua_CFunction cfrev_lookup(const CFuncRevMap *m,
   return NULL;
 }
 
+/* Helper to format a dotted "prefix.suffix" identifier into a fixed
+** buffer, returning 0 if the result was truncated.  Checking the
+** snprintf return value here also silences -Wformat-truncation, since
+** GCC sees the caller is handling truncation rather than ignoring it. */
+static int join_name(char *dst, size_t dstsz,
+                     const char *prefix, const char *suffix) {
+  int n = snprintf(dst, dstsz, "%s.%s", prefix, suffix);
+  return n > 0 && (size_t)n < dstsz;
+}
+
+
 /* Enumerate a table on the top of the stack, recording C functions into m.
 ** Also recurses into sub-tables (one level deep) so that functions stored in
 ** sequence or method tables inside a library table are captured. */
@@ -150,32 +161,31 @@ static void enum_table_into_cfmap(CFuncMap *m, lua_State *tmp,
       lua_CFunction fn = lua_tocfunction(tmp, -1);
       if (fn && !cfmap_lookup(m, fn)) {
         const char *fname = lua_tostring(tmp, -2);
-        if (fname) {
-          char key[512];
-          snprintf(key, sizeof(key), "%s.%s", libname, fname);
+        char key[512];
+        if (fname && join_name(key, sizeof(key), libname, fname))
           cfmap_add(m, fn, key);
-        }
       }
     } else if (lua_type(tmp, -1) == LUA_TTABLE) {
       /* recurse one level into sub-tables (catches package.searchers, etc.)
       ** Copy the outer key to string before iterating so lua_tostring on
       ** inner integer keys cannot corrupt the outer iteration. */
       char sub[512];
-      if (lua_type(tmp, -2) == LUA_TSTRING)
-        snprintf(sub, sizeof(sub), "%s.%s", libname, lua_tostring(tmp, -2));
-      else
-        snprintf(sub, sizeof(sub), "%s.?", libname);
+      const char *outer = (lua_type(tmp, -2) == LUA_TSTRING)
+                          ? lua_tostring(tmp, -2) : "?";
+      if (!join_name(sub, sizeof(sub), libname, outer)) {
+        lua_pop(tmp, 1);
+        continue;
+      }
       lua_pushnil(tmp);
       while (lua_next(tmp, -2)) {
         if (lua_isfunction(tmp, -1)) {
           lua_CFunction fn2 = lua_tocfunction(tmp, -1);
           if (fn2 && !cfmap_lookup(m, fn2)) {
             char key[512];
-            if (lua_type(tmp, -2) == LUA_TSTRING)
-              snprintf(key, sizeof(key), "%s.%s", sub, lua_tostring(tmp, -2));
-            else
-              snprintf(key, sizeof(key), "%s.?", sub);
-            cfmap_add(m, fn2, key);
+            const char *inner = (lua_type(tmp, -2) == LUA_TSTRING)
+                                ? lua_tostring(tmp, -2) : "?";
+            if (join_name(key, sizeof(key), sub, inner))
+              cfmap_add(m, fn2, key);
           }
         }
         lua_pop(tmp, 1);
@@ -189,14 +199,15 @@ static void enum_table_into_cfmap(CFuncMap *m, lua_State *tmp,
 ** Two-phase: call ALL openers first (so _G is fully populated, e.g. require
 ** from package appears when enumerating base's _G), then enumerate each table. */
 static void build_cfmap_for_save(CFuncMap *m, const lstasis_Lib *libs) {
-  if (!libs) return;
-  lua_State *tmp = luaL_newstate();
-  if (!tmp) return;
-
+  lua_State *tmp;
   int nlibs = 0;
-  for (const lstasis_Lib *lib = libs; lib->libname; lib++) nlibs++;
-
-  int *refs = (int *)malloc((size_t)nlibs * sizeof(int));
+  int *refs;
+  const lstasis_Lib *lib;
+  if (!libs) return;
+  tmp = luaL_newstate();
+  if (!tmp) return;
+  for (lib = libs; lib->libname; lib++) nlibs++;
+  refs = (int *)malloc((size_t)nlibs * sizeof(int));
 
   /* Phase 1: call all openers, anchor returned tables in the registry */
   for (int i = 0; i < nlibs; i++) {
@@ -273,30 +284,33 @@ static void enum_table_into_cfrev(CFuncRevMap *m, lua_State *L,
       lua_CFunction fn = lua_tocfunction(L, -1);
       if (fn && lua_type(L, -2) == LUA_TSTRING) {
         char key[512];
-        snprintf(key, sizeof(key), "%s.%s", libname, lua_tostring(L, -2));
-        size_t klen = strlen(key);
-        if (!cfrev_lookup(m, key, klen))
-          cfrev_add(m, key, fn);
+        if (join_name(key, sizeof(key), libname, lua_tostring(L, -2))) {
+          size_t klen = strlen(key);
+          if (!cfrev_lookup(m, key, klen))
+            cfrev_add(m, key, fn);
+        }
       }
     } else if (lua_type(L, -1) == LUA_TTABLE) {
       char sub[512];
-      if (lua_type(L, -2) == LUA_TSTRING)
-        snprintf(sub, sizeof(sub), "%s.%s", libname, lua_tostring(L, -2));
-      else
-        snprintf(sub, sizeof(sub), "%s.?", libname);
+      const char *outer = (lua_type(L, -2) == LUA_TSTRING)
+                          ? lua_tostring(L, -2) : "?";
+      if (!join_name(sub, sizeof(sub), libname, outer)) {
+        lua_pop(L, 1);
+        continue;
+      }
       lua_pushnil(L);
       while (lua_next(L, -2)) {
         if (lua_isfunction(L, -1)) {
           lua_CFunction fn2 = lua_tocfunction(L, -1);
           if (fn2) {
             char key[512];
-            if (lua_type(L, -2) == LUA_TSTRING)
-              snprintf(key, sizeof(key), "%s.%s", sub, lua_tostring(L, -2));
-            else
-              snprintf(key, sizeof(key), "%s.?", sub);
-            size_t klen = strlen(key);
-            if (!cfrev_lookup(m, key, klen))
-              cfrev_add(m, key, fn2);
+            const char *inner = (lua_type(L, -2) == LUA_TSTRING)
+                                ? lua_tostring(L, -2) : "?";
+            if (join_name(key, sizeof(key), sub, inner)) {
+              size_t klen = strlen(key);
+              if (!cfrev_lookup(m, key, klen))
+                cfrev_add(m, key, fn2);
+            }
           }
         }
         lua_pop(L, 1);
@@ -309,14 +323,17 @@ static void enum_table_into_cfrev(CFuncRevMap *m, lua_State *L,
 /* Build load-side map on a fresh temporary state so openers never touch the
 ** caller's state (which may have custom globals, a replaced require, etc.). */
 static void build_cfmap_for_load(CFuncRevMap *m, const lstasis_Lib *libs) {
+  lua_State *tmp;
+  int nlibs;
+  int *refs;
   if (!libs) return;
-  lua_State *tmp = luaL_newstate();
+  tmp = luaL_newstate();
   if (!tmp) return;
 
-  int nlibs = 0;
+  nlibs = 0;
   for (const lstasis_Lib *lib = libs; lib->libname; lib++) nlibs++;
 
-  int *refs = (int *)malloc((size_t)nlibs * sizeof(int));
+  refs = (int *)malloc((size_t)nlibs * sizeof(int));
 
   /* Phase 1: call all openers */
   for (int i = 0; i < nlibs; i++) {
@@ -521,9 +538,10 @@ static int is_serializable(GCObject *o) {
 }
 
 static void discover_obj(SerState *s, ObjQ *q, GCObject *o) {
+  uint32_t id;
   if (!o || objmap_find(&s->map, o)) return;
   if (!is_serializable(o)) return;
-  uint32_t id = s->next_id++;
+  id = s->next_id++;
   objmap_insert(&s->map, o, id);
   if (s->num_objs >= s->cap_objs) {
     s->cap_objs *= 2;
@@ -594,12 +612,13 @@ static void process_obj(SerState *s, ObjQ *q, GCObject *o) {
 }
 
 static void discover_all(SerState *s, lua_State *L) {
-  ObjQ q; oq_init(&q);
+  ObjQ q;
+  GCObject *o;
+  oq_init(&q);
   discover_tv(s, &q, &G(L)->l_registry);
   discover_obj(s, &q, obj2gco(mainthread(G(L))));
   for (int i = 0; i < LUA_NUMTYPES; i++)
     if (G(L)->mt[i]) discover_obj(s, &q, obj2gco(G(L)->mt[i]));
-  GCObject *o;
   while ((o = oq_pop(&q))) process_obj(s, &q, o);
   oq_free(&q);
 }
@@ -616,6 +635,7 @@ static void write_tv(WBuf *b, SerState *s, const TValue *v) {
     /* Light C function: serialize by registered name */
     lua_CFunction fn = fvalue(v);
     const char *name = cfmap_lookup(&s->cfm, fn);
+    uint16_t nlen;
     if (!name) {
       if (!s->error) {
         s->error = 1;
@@ -625,7 +645,7 @@ static void write_tv(WBuf *b, SerState *s, const TValue *v) {
       wb_u8(b, LUA_VNIL); /* write nil as fallback to keep format consistent */
       return;
     }
-    uint16_t nlen = (uint16_t)strlen(name);
+    nlen = (uint16_t)strlen(name);
     wb_u8(b, CFUNC_TAG);
     wb_u16(b, nlen);
     wb_write(b, name, nlen);
@@ -732,6 +752,7 @@ static void wobj_upval(WBuf *b, SerState *s, UpVal *uv) {
 }
 
 static void wobj_cclosure(WBuf *b, SerState *s, CClosure *cl) {
+  uint16_t nlen;
   lua_CFunction fn = cl->f;
   const char *name = cfmap_lookup(&s->cfm, fn);
   if (!name) {
@@ -744,7 +765,7 @@ static void wobj_cclosure(WBuf *b, SerState *s, CClosure *cl) {
     wb_u8(b, 0); /* nuv = 0, keep format consistent */
     return;
   }
-  uint16_t nlen = (uint16_t)strlen(name);
+  nlen = (uint16_t)strlen(name);
   wb_u8(b, CFUNC_TAG);
   wb_u16(b, nlen);
   wb_write(b, name, nlen);
@@ -754,12 +775,15 @@ static void wobj_cclosure(WBuf *b, SerState *s, CClosure *cl) {
 }
 
 static void wobj_thread(WBuf *b, SerState *s, lua_State *th) {
+  int32_t nstack;
+  int32_t nci;
+  uint32_t nopen;
   wb_u8(b, (uint8_t)th->status);
-  int32_t nstack = (int32_t)(th->top.p - th->stack.p);
+  nstack = (int32_t)(th->top.p - th->stack.p);
   wb_i32(b, nstack);
   for (int32_t i = 0; i < nstack; i++)
     write_tv(b, s, s2v(th->stack.p + i));
-  int32_t nci = 0;
+  nci = 0;
   for (CallInfo *ci = &th->base_ci; ; ci = ci->next) {
     nci++;
     if (ci == th->ci) break;
@@ -788,7 +812,7 @@ static void wobj_thread(WBuf *b, SerState *s, lua_State *th) {
     }
     if (ci == th->ci) break;
   }
-  uint32_t nopen = 0;
+  nopen = 0;
   for (UpVal *uv = th->openupval; uv; uv = uv->u.open.next) nopen++;
   wb_u32(b, nopen);
   for (UpVal *uv = th->openupval; uv; uv = uv->u.open.next) {
@@ -798,6 +822,9 @@ static void wobj_thread(WBuf *b, SerState *s, lua_State *th) {
 }
 
 static void write_obj(WBuf *b, SerState *s, GCObject *o) {
+  size_t size_pos;
+  size_t data_start;
+  uint32_t data_sz;
   uint8_t type_code;
   switch (novariant(o->tt)) {
   case LUA_TSTRING:   type_code = OBJ_STRING;   break;
@@ -817,9 +844,9 @@ static void write_obj(WBuf *b, SerState *s, GCObject *o) {
 #else
   wb_u64(b, 0);  /* placeholder — only meaningful in deterministic mode */
 #endif
-  size_t size_pos = b->size;
+  size_pos = b->size;
   wb_u32(b, 0);
-  size_t data_start = b->size;
+  data_start = b->size;
 
   switch (type_code) {
   case OBJ_STRING:       wobj_string  (b, gco2ts(o)); break;
@@ -832,7 +859,7 @@ static void write_obj(WBuf *b, SerState *s, GCObject *o) {
   case OBJ_THREAD:       wobj_thread  (b, s, gco2th(o)); break;
   }
 
-  uint32_t data_sz = (uint32_t)(b->size - data_start);
+  data_sz = (uint32_t)(b->size - data_start);
   wb_patch_u32(b, size_pos, data_sz);
 }
 
@@ -841,11 +868,12 @@ static void write_obj(WBuf *b, SerState *s, GCObject *o) {
 ** --------------------------------------------------------------------- */
 int lstasis_save(lua_State *L, const lstasis_Lib *libs,
                 unsigned char **out_buf, size_t *out_size) {
-  SerState s; ser_init(&s);
+  SerState s;
+  WBuf b;
+  ser_init(&s);
   build_cfmap_for_save(&s.cfm, libs);
   discover_all(&s, L);
-
-  WBuf b; wb_init(&b);
+  wb_init(&b);
   /* Header: [next_seq:u64].  Objects fill the space between the header
   ** and the fixed-size roots footer; the loader derives the object
   ** count and section bounds from the buffer size and footer size, so
@@ -903,14 +931,16 @@ static TValue ds_read_tv(DeserState *d) {
   uint8_t tag = rb_u8(&d->rb);
   v.tt_ = tag;
   if (tag == CFUNC_TAG) {
+    lua_CFunction fn;
     uint16_t nlen = rb_u16(&d->rb);
     const char *name = (const char *)(d->rb.data + d->rb.pos);
     d->rb.pos += nlen;
-    lua_CFunction fn = cfrev_lookup(&d->cfrev, name, nlen);
+    fn = cfrev_lookup(&d->cfrev, name, nlen);
     if (!fn) {
       if (!d->error) {
+        int n;
         d->error = 1;
-        int n = nlen < 200 ? (int)nlen : 200;
+        n = nlen < 200 ? (int)nlen : 200;
         snprintf(d->errmsg, sizeof(d->errmsg),
                  "unknown C function identifier '%.*s'", n, name);
       }
@@ -933,25 +963,34 @@ static TValue ds_read_tv(DeserState *d) {
 ** --------------------------------------------------------------------- */
 
 static Proto *create_proto(DeserState *d) {
+  Proto *p;
+  int sizecode;
+  int sizek;
+  int sizep;
+  int sizeupvalues;
+  int sizelineinfo;
+  int sizeabslineinfo;
+  int sizelocvars;
+  lua_State *L;
   RBuf rb = d->rb;
   (void)rb_u8(&rb); (void)rb_u8(&rb); (void)rb_u8(&rb);
-  int sizecode = (int)rb_u32(&rb);
+  sizecode = (int)rb_u32(&rb);
   rb.pos += (size_t)sizecode * sizeof(Instruction);
-  int sizek = (int)rb_u32(&rb);
+  sizek = (int)rb_u32(&rb);
   for (int i = 0; i < sizek; i++) rb_skip_tv(&rb);
-  int sizep = (int)rb_u32(&rb);
+  sizep = (int)rb_u32(&rb);
   rb.pos += (size_t)sizep * 4;
-  int sizeupvalues = (int)rb_u32(&rb);
+  sizeupvalues = (int)rb_u32(&rb);
   rb.pos += (size_t)sizeupvalues * (4+1+1+1);
-  int sizelineinfo = (int)rb_u32(&rb);
+  sizelineinfo = (int)rb_u32(&rb);
   rb.pos += (size_t)sizelineinfo;
-  int sizeabslineinfo = (int)rb_u32(&rb);
+  sizeabslineinfo = (int)rb_u32(&rb);
   rb.pos += (size_t)sizeabslineinfo * 8;
-  int sizelocvars = (int)rb_u32(&rb);
+  sizelocvars = (int)rb_u32(&rb);
   (void)sizelocvars;
 
-  lua_State *L = d->L;
-  Proto *p = luaF_newproto(L);
+  L = d->L;
+  p = luaF_newproto(L);
   p->sizecode = sizecode;
   if (sizecode > 0)
     p->code = luaM_newvector(L, sizecode, Instruction);
@@ -989,11 +1028,14 @@ static Proto *create_proto(DeserState *d) {
 ** --------------------------------------------------------------------- */
 
 static void fill_proto(DeserState *d, Proto *p) {
+  uint32_t sizecode;
+  uint32_t nloc;
+  uint32_t srcid;
   RBuf *rb       = &d->rb;
   p->numparams   = rb_u8(rb);
   p->flag        = rb_u8(rb);
   p->maxstacksize = rb_u8(rb);
-  uint32_t sizecode = rb_u32(rb);
+  sizecode = rb_u32(rb);
   (void)sizecode;
   if (p->sizecode > 0)
     memcpy(p->code, rb->data + rb->pos, (size_t)p->sizecode * sizeof(Instruction));
@@ -1023,7 +1065,7 @@ static void fill_proto(DeserState *d, Proto *p) {
     p->abslineinfo[i].pc   = rb_i32(rb);
     p->abslineinfo[i].line = rb_i32(rb);
   }
-  uint32_t nloc = rb_u32(rb);
+  nloc = rb_u32(rb);
   p->sizelocvars = (int)nloc;
   if (nloc > 0) {
     p->locvars = luaM_newvector(d->L, (int)nloc, LocVar);
@@ -1034,17 +1076,18 @@ static void fill_proto(DeserState *d, Proto *p) {
       p->locvars[i].endpc   = rb_i32(rb);
     }
   }
-  uint32_t srcid   = rb_u32(rb);
+  srcid = rb_u32(rb);
   p->source        = srcid ? (TString *)d->id_to_ptr[srcid] : NULL;
   p->linedefined   = rb_i32(rb);
   p->lastlinedefined = rb_i32(rb);
 }
 
 static void fill_lclosure(DeserState *d, LClosure *cl) {
+  uint8_t nuv;
   RBuf *rb = &d->rb;
   uint32_t pid = rb_u32(rb);
   cl->p = pid ? (Proto *)d->id_to_ptr[pid] : NULL;
-  uint8_t nuv = rb_u8(rb);
+  nuv = rb_u8(rb);
   for (int i = 0; i < nuv; i++) {
     uint32_t uid = rb_u32(rb);
     cl->upvals[i] = uid ? (UpVal *)d->id_to_ptr[uid] : NULL;
@@ -1052,6 +1095,7 @@ static void fill_lclosure(DeserState *d, LClosure *cl) {
 }
 
 static void fill_cclosure(DeserState *d, CClosure *cl) {
+  uint8_t nuv;
   RBuf *rb = &d->rb;
   uint8_t tag = rb_u8(rb);
   if (tag == CFUNC_TAG) {
@@ -1060,13 +1104,14 @@ static void fill_cclosure(DeserState *d, CClosure *cl) {
     rb->pos += nlen;
     cl->f = cfrev_lookup(&d->cfrev, name, nlen);
     if (!cl->f && !d->error) {
+      int n;
       d->error = 1;
-      int n = nlen < 200 ? (int)nlen : 200;
+      n = nlen < 200 ? (int)nlen : 200;
       snprintf(d->errmsg, sizeof(d->errmsg),
                "unknown C closure '%.*s'", n, name);
     }
   }
-  uint8_t nuv = rb_u8(rb);
+  nuv = rb_u8(rb);
   for (int i = 0; i < (int)nuv; i++)
     cl->upvalue[i] = ds_read_tv(d);
 }
@@ -1077,6 +1122,7 @@ static void fill_upval_closed(DeserState *d, UpVal *uv) {
 }
 
 static void fill_table(DeserState *d, Table *t) {
+  uint32_t mt_id;
   lua_State *L = d->L;
   RBuf *rb     = &d->rb;
   uint32_t cnt = rb_u32(rb);
@@ -1088,18 +1134,25 @@ static void fill_table(DeserState *d, Table *t) {
     else
       luaH_set(L, t, &key, &val);
   }
-  uint32_t mt_id  = rb_u32(rb);
+  mt_id = rb_u32(rb);
   t->metatable    = mt_id ? (Table *)d->id_to_ptr[mt_id] : NULL;
   (void)rb_u32(rb);
 }
 
 static void fill_thread(DeserState *d, lua_State *th, int is_main) {
+  int32_t nstack;
+  TStatus saved_status;
+  RBuf *rb;
+  CallInfo *cur;
+  lua_State *L;
+  int32_t nci_total;
+  uint32_t nopen;
   (void)is_main;
-  lua_State *L = d->L;
-  RBuf *rb     = &d->rb;
+  L = d->L;
+  rb = &d->rb;
 
-  TStatus saved_status = (TStatus)rb_u8(rb);
-  int32_t nstack = rb_i32(rb);
+  saved_status = (TStatus)rb_u8(rb);
+  nstack = rb_i32(rb);
 
   /* Tear down the CI chain without touching stack contents.
   ** luaE_resetthread not used: it zeroes slot 0 (via setnilvalue2s)
@@ -1129,8 +1182,8 @@ static void fill_thread(DeserState *d, lua_State *th, int is_main) {
   }
   th->top.p = th->stack.p + nstack;
 
-  int32_t nci_total = rb_i32(rb);
-  CallInfo *cur = &th->base_ci;
+  nci_total = rb_i32(rb);
+  cur = &th->base_ci;
   for (int32_t j = 0; j < nci_total; j++) {
     uint8_t is_lua  = rb_u8(rb);
     int32_t foff    = rb_i32(rb);
@@ -1170,14 +1223,15 @@ static void fill_thread(DeserState *d, lua_State *th, int is_main) {
   }
 
   /* open upvalues */
-  uint32_t nopen = rb_u32(rb);
+  nopen = rb_u32(rb);
   for (uint32_t i = 0; i < nopen; i++) {
+    UpVal **pp;
     uint32_t uid   = rb_u32(rb);
     int32_t  soff  = rb_i32(rb);
     UpVal *uv      = (UpVal *)d->id_to_ptr[uid];
     if (!uv) continue;
     uv->v.p = s2v(th->stack.p + soff);
-    UpVal **pp = &th->openupval;
+    pp = &th->openupval;
     while (*pp && (*pp)->v.p > uv->v.p)
       pp = &(*pp)->u.open.next;
     uv->u.open.next     = *pp;
@@ -1198,6 +1252,15 @@ static void fill_thread(DeserState *d, lua_State *th, int is_main) {
 ** --------------------------------------------------------------------- */
 lua_State *lstasis_load(const unsigned char *buf, size_t size,
                        const lstasis_Lib *libs) {
+  size_t header_size;
+  size_t footer_size;
+  size_t max_objects;
+  uint32_t main_thread_id;
+  size_t objects_end;
+  uint64_t saved_next_seq;
+  uint32_t registry_id;
+  uint32_t mt_ids[LUA_NUMTYPES];
+  lua_State *L;
   DeserState d;
   memset(&d, 0, sizeof(d));
   d.rb.data = buf;
@@ -1208,18 +1271,19 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   /* Format: [next_seq:u64] {objects...} [registry:u32 main:u32
   ** mt:u32×LUA_NUMTYPES].  The roots footer is fixed-size, so the
   ** object section is everything between byte 8 and (size - footer). */
-  const size_t header_size = 8;  /* next_seq */
-  const size_t footer_size = (size_t)(4 + 4 + LUA_NUMTYPES * 4);
+  header_size = 8;  /* next_seq */
+  footer_size = (size_t)(4 + 4 + LUA_NUMTYPES * 4);
   if (size < header_size + footer_size) return NULL;
-  size_t objects_end = size - footer_size;
+  objects_end = size - footer_size;
 
   if (!rb_ok(&d.rb, header_size)) return NULL;
-  uint64_t saved_next_seq = rb_u64(&d.rb);
+  saved_next_seq = rb_u64(&d.rb);
+  (void)saved_next_seq;  /* used only in deterministic mode below */
 
   /* Each object header is at least 1+8+4 = 13 bytes (type, objid, size).
   ** This bounds how many objects can fit and is what we allocate the
   ** index arrays for — one malloc each, no growth. */
-  size_t max_objects = (objects_end - d.rb.pos) / 13;
+  max_objects = (objects_end - d.rb.pos) / 13;
   if (max_objects == 0) max_objects = 1;
   d.obj_types   = (uint8_t  *)malloc(max_objects);
   d.obj_objids  = (uint64_t *)malloc(max_objects * sizeof(uint64_t));
@@ -1228,10 +1292,11 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
 
   d.num_objects = 0;
   while (d.rb.pos < objects_end) {
+    uint32_t dsz;
     if (!rb_ok(&d.rb, 1 + 8 + 4)) goto fail_pre;
     d.obj_types[d.num_objects]   = rb_u8(&d.rb);
     d.obj_objids[d.num_objects]  = rb_u64(&d.rb);
-    uint32_t dsz                  = rb_u32(&d.rb);
+    dsz = rb_u32(&d.rb);
     d.obj_offsets[d.num_objects] = d.rb.pos;
     if ((size_t)dsz > objects_end - d.rb.pos) goto fail_pre;
     d.rb.pos                     += dsz;
@@ -1239,12 +1304,11 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   }
 
   if (!rb_ok(&d.rb, (4 + 4 + LUA_NUMTYPES * 4))) goto fail_pre;
-  uint32_t registry_id     = rb_u32(&d.rb);
-  uint32_t main_thread_id  = rb_u32(&d.rb);
-  uint32_t mt_ids[LUA_NUMTYPES];
+  registry_id = rb_u32(&d.rb);
+  main_thread_id = rb_u32(&d.rb);
   for (int i = 0; i < LUA_NUMTYPES; i++) mt_ids[i] = rb_u32(&d.rb);
 
-  lua_State *L = luaL_newstate();
+  L = luaL_newstate();
   if (!L) goto fail_pre;
   d.L              = L;
   d.main_thread_id = main_thread_id;
@@ -1265,10 +1329,11 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   ** Pass 1: create blank objects
   ** -------------------------------------------------------------- */
   for (uint32_t i = 0; i < d.num_objects; i++) {
+    uint8_t tc;
     uint32_t id = i + 1;
     if (id == main_thread_id) continue;
 
-    uint8_t  tc  = d.obj_types[i];
+    tc = d.obj_types[i];
     d.rb.pos     = d.obj_offsets[i];
 
     switch (tc) {
@@ -1279,12 +1344,14 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
       break;
     }
     case OBJ_TABLE: {
+      Table *t;
+      uint32_t asize;
       uint32_t cnt = rb_u32(&d.rb);
       /* skip entries: each key+value pair uses rb_skip_tv twice */
       for (uint32_t e = 0; e < cnt * 2; e++) rb_skip_tv(&d.rb);
       (void)rb_u32(&d.rb); /* mt_id */
-      uint32_t asize = rb_u32(&d.rb);
-      Table *t = luaH_new(L);
+      asize = rb_u32(&d.rb);
+      t = luaH_new(L);
       if (asize > 0) luaH_resize(L, t, asize, 0);
       d.id_to_ptr[id] = t;
       break;
@@ -1295,24 +1362,28 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
       break;
     }
     case OBJ_LCLOSURE: {
+      LClosure *cl;
+      uint8_t nuv;
       (void)rb_u32(&d.rb);
-      uint8_t nuv  = rb_u8(&d.rb);
-      LClosure *cl = luaF_newLclosure(L, nuv);
+      nuv = rb_u8(&d.rb);
+      cl = luaF_newLclosure(L, nuv);
       cl->p = NULL;
       for (int j = 0; j < nuv; j++) cl->upvals[j] = NULL;
       d.id_to_ptr[id] = cl;
       break;
     }
     case OBJ_CCLOSURE: {
+      uint8_t nuv;
+      CClosure *cl;
       /* skip fn name: CFUNC_TAG byte + uint16 nlen + nlen bytes */
       uint8_t ctag = rb_u8(&d.rb);
       if (ctag == CFUNC_TAG) {
         uint16_t nlen = rb_u16(&d.rb);
         d.rb.pos += nlen;
       }
-      uint8_t nuv   = rb_u8(&d.rb);
+      nuv = rb_u8(&d.rb);
       for (int j = 0; j < (int)nuv; j++) rb_skip_tv(&d.rb);
-      CClosure *cl  = luaF_newCclosure(L, nuv);
+      cl = luaF_newCclosure(L, nuv);
       cl->f         = NULL;
       d.id_to_ptr[id] = cl;
       break;
@@ -1411,8 +1482,9 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
     fill_thread(&d, mainthread(G(L)), 1);
   }
   for (uint32_t i = 0; i < d.num_objects; i++) {
+    uint32_t id;
     if (d.obj_types[i] != OBJ_THREAD) continue;
-    uint32_t id = i + 1;
+    id = i + 1;
     if (id == main_thread_id) continue;
     d.rb.pos = d.obj_offsets[i];
     fill_thread(&d, (lua_State *)d.id_to_ptr[id], 0);

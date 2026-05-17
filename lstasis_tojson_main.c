@@ -16,6 +16,10 @@
 
 int main(int argc, char **argv) {
   FILE *f;
+  uint8_t *buf = NULL;
+  size_t   cap = 0, sz = 0;
+  int      c;
+  int      ret;
   if (argc > 1) {
     f = fopen(argv[1], "rb");
     if (!f) {
@@ -26,10 +30,6 @@ int main(int argc, char **argv) {
   } else {
     f = stdin;
   }
-
-  uint8_t *buf = NULL;
-  size_t   cap = 0, sz = 0;
-  int      c;
   while ((c = fgetc(f)) != EOF) {
     if (sz >= cap) {
       size_t ncap = cap ? cap * 2 : 8192;
@@ -44,8 +44,7 @@ int main(int argc, char **argv) {
     buf[sz++] = (uint8_t)c;
   }
   if (f != stdin) fclose(f);
-
-  int ret = lstasis_tojson(buf, sz, stdout);
+  ret = lstasis_tojson(buf, sz, stdout);
   free(buf);
   return ret;
 }

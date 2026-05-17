@@ -56,17 +56,20 @@ static int run(lua_State *L, const char *code) {
    Caller owns the returned state and must lua_close() it. */
 static lua_State *save_reload(lua_State *L, const char *setup_code,
                               const lstasis_Lib *libs) {
+  size_t sz;
+  unsigned char *buf;
+  lua_State *L2;
   if (setup_code) {
     int r = run(L, setup_code);
     if (r != LUA_OK) return NULL;
   }
-  unsigned char *buf = NULL;
-  size_t sz = 0;
+  buf = NULL;
+  sz = 0;
   if (lstasis_save(L, libs, &buf, &sz) != 0) {
     fprintf(stderr, "save failed\n");
     return NULL;
   }
-  lua_State *L2 = lstasis_load(buf, sz, libs);
+  L2 = lstasis_load(buf, sz, libs);
   free(buf);
   return L2;
 }
@@ -87,9 +90,12 @@ static int get_global(lua_State *L2, const char *name) {
 ** Test 1 – basic scalar values
 ** --------------------------------------------------------------------- */
 static void test_basic(void) {
+  lua_State *L2;
+  lua_State *L;
+  double fv;
   printf("== test_basic ==\n");
-  lua_State *L = new_state();
-  lua_State *L2 = save_reload(L,
+  L = new_state();
+  L2 = save_reload(L,
     "n_int   = 42\n"
     "n_float = 3.14\n"
     "b_true  = true\n"
@@ -110,16 +116,20 @@ static void test_basic(void) {
   get_global(L2, "n_float");
   CHECK(lua_type(L2,-1)==LUA_TNUMBER && !lua_isinteger(L2,-1),
         "n_float is float", "type=%d", lua_type(L2,-1));
-  double fv = lua_tonumber(L2,-1);
+  fv = lua_tonumber(L2,-1);
   CHECK(fv > 3.13 && fv < 3.15, "n_float≈3.14", "got %g", fv);
   lua_pop(L2, 1);
 
   get_global(L2, "b_true");
-  CHECK(lua_type(L2,-1)==LUA_TBOOLEAN && lua_toboolean(L2,-1), "b_true", "");
+  CHECK(lua_type(L2,-1)==LUA_TBOOLEAN && lua_toboolean(L2,-1),
+        "b_true", "type=%d val=%d",
+        lua_type(L2,-1), lua_toboolean(L2,-1));
   lua_pop(L2, 1);
 
   get_global(L2, "b_false");
-  CHECK(lua_type(L2,-1)==LUA_TBOOLEAN && !lua_toboolean(L2,-1), "b_false", "");
+  CHECK(lua_type(L2,-1)==LUA_TBOOLEAN && !lua_toboolean(L2,-1),
+        "b_false", "type=%d val=%d",
+        lua_type(L2,-1), lua_toboolean(L2,-1));
   lua_pop(L2, 1);
 
   get_global(L2, "s_hello");
@@ -138,9 +148,11 @@ static void test_basic(void) {
 ** Test 2 – tables (array + hash + nested)
 ** --------------------------------------------------------------------- */
 static void test_table(void) {
+  lua_State *L2;
+  lua_State *L;
   printf("== test_table ==\n");
-  lua_State *L = new_state();
-  lua_State *L2 = save_reload(L,
+  L = new_state();
+  L2 = save_reload(L,
     "arr = {10, 20, 30}\n"
     "t   = { x=1, y=2, z='three' }\n"
     "nested = { inner = { val = 99 } }\n",
@@ -175,9 +187,11 @@ static void test_table(void) {
 ** Test 3 – cyclic table reference
 ** --------------------------------------------------------------------- */
 static void test_cycle(void) {
+  lua_State *L2;
+  lua_State *L;
   printf("== test_cycle ==\n");
-  lua_State *L = new_state();
-  lua_State *L2 = save_reload(L,
+  L = new_state();
+  L2 = save_reload(L,
     "t = {}\n"
     "t.self = t\n"
     "t.val  = 777\n",
@@ -201,9 +215,11 @@ static void test_cycle(void) {
 ** Test 4 – closure with upvalue
 ** --------------------------------------------------------------------- */
 static void test_closure_upvalue(void) {
+  lua_State *L2;
+  lua_State *L;
   printf("== test_closure_upvalue ==\n");
-  lua_State *L = new_state();
-  lua_State *L2 = save_reload(L,
+  L = new_state();
+  L2 = save_reload(L,
     "function make_counter(init)\n"
     "  local c = init\n"
     "  return function() c = c + 1; return c end\n"
@@ -229,9 +245,11 @@ static void test_closure_upvalue(void) {
 ** Test 5 – shared upvalue between two closures
 ** --------------------------------------------------------------------- */
 static void test_shared_upvalue(void) {
+  lua_State *L2;
+  lua_State *L;
   printf("== test_shared_upvalue ==\n");
-  lua_State *L = new_state();
-  lua_State *L2 = save_reload(L,
+  L = new_state();
+  L2 = save_reload(L,
     "do\n"
     "  local shared = 0\n"
     "  inc = function() shared = shared + 1 end\n"
@@ -260,9 +278,12 @@ static void test_shared_upvalue(void) {
 ** Test 6 – long string (> LUAI_MAXSHORTLEN = 40 chars)
 ** --------------------------------------------------------------------- */
 static void test_long_string(void) {
+  lua_State *L2;
+  lua_State *L;
+  const char *s;
   printf("== test_long_string ==\n");
-  lua_State *L = new_state();
-  lua_State *L2 = save_reload(L,
+  L = new_state();
+  L2 = save_reload(L,
     "long_s = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEF_END'\n",
     std_libs
   );
@@ -270,7 +291,7 @@ static void test_long_string(void) {
   if (!L2) { FAIL("reload", "NULL"); return; }
 
   get_global(L2, "long_s");
-  const char *s = lua_tostring(L2, -1);
+  s = lua_tostring(L2, -1);
   CHECK(s && strstr(s,"_END") && strlen(s)==46, "long_string content",
         "got len=%zu val='%s'",(s?strlen(s):0),(s?s:"NULL"));
   lua_pop(L2, 1);
@@ -281,9 +302,16 @@ static void test_long_string(void) {
 ** Test 7 – yielded coroutine
 ** --------------------------------------------------------------------- */
 static void test_coroutine(void) {
+  int r;
+  int status;
+  lua_State *L;
+  long long v2_before;
+  lua_State *L2;
+  lua_State *co;
+  int nres;
   printf("== test_coroutine ==\n");
-  lua_State *L = new_state();
-  int r = run(L,
+  L = new_state();
+  r = run(L,
     "function gen(n)\n"
     "  for i = 1, n do\n"
     "    coroutine.yield(i)\n"
@@ -297,10 +325,10 @@ static void test_coroutine(void) {
   if (r != LUA_OK) { FAIL("setup", "lua error"); return; }
 
   lua_getglobal(L, "v2");
-  long long v2_before = lua_tointeger(L, -1);
+  v2_before = lua_tointeger(L, -1);
   lua_pop(L, 1);
 
-  lua_State *L2 = save_reload(L, NULL, std_libs);
+  L2 = save_reload(L, NULL, std_libs);
   lua_close(L);
   if (!L2) { FAIL("reload", "NULL"); return; }
 
@@ -315,11 +343,11 @@ static void test_coroutine(void) {
 
   get_global(L2, "co");
   CHECK(lua_type(L2,-1)==LUA_TTHREAD, "co is thread","type=%d",lua_type(L2,-1));
-  lua_State *co = lua_tothread(L2, -1);
+  co = lua_tothread(L2, -1);
   lua_pop(L2, 1);
 
-  int nres = 0;
-  int status = lua_resume(co, L2, 0, &nres);
+  nres = 0;
+  status = lua_resume(co, L2, 0, &nres);
   CHECK(status == LUA_YIELD || status == LUA_OK, "resume ok","status=%d",status);
   if (status == LUA_YIELD && nres >= 1) {
     long long yielded = lua_tointeger(co, -1);
@@ -345,11 +373,17 @@ static void test_coroutine(void) {
 ** public API without touching internal lua_State fields.
 ** --------------------------------------------------------------------- */
 static void test_stack_restored(void) {
+  int r;
+  int status;
+  lua_State *L;
+  lua_State *L2;
+  lua_State *co2;
+  int nres;
   printf("== test_stack_restored ==\n");
-  lua_State *L = new_state();
+  L = new_state();
 
   /* gen yields (i, f, s, b) each iteration and returns them at the end. */
-  int r = run(L,
+  r = run(L,
     "function gen(n)\n"
     "  local f = 1.5\n"
     "  local s = 'hi'\n"
@@ -365,17 +399,17 @@ static void test_stack_restored(void) {
   );
   if (r != LUA_OK) { FAIL("setup", "lua error"); return; }
 
-  lua_State *L2 = save_reload(L, NULL, std_libs);
+  L2 = save_reload(L, NULL, std_libs);
   lua_close(L);
   if (!L2) { FAIL("reload", "NULL"); return; }
 
   lua_getglobal(L2, "co");
-  lua_State *co2 = lua_tothread(L2, -1);
+  co2 = lua_tothread(L2, -1);
   lua_pop(L2, 1);
 
   /* Resume: should yield (3, 1.5, 'hi', true) — verifies locals intact. */
-  int nres = 0;
-  int status = lua_resume(co2, L2, 0, &nres);
+  nres = 0;
+  status = lua_resume(co2, L2, 0, &nres);
   CHECK(status == LUA_YIELD, "stack depth preserved", "status=%d", status);
   if (status == LUA_YIELD && nres == 4) {
     long long counter = lua_tointeger(co2, -4);
@@ -409,9 +443,11 @@ static void test_stack_restored(void) {
 ** Test 8 – multiple closures, one recursive via table
 ** --------------------------------------------------------------------- */
 static void test_recursive_closure(void) {
+  lua_State *L2;
+  lua_State *L;
   printf("== test_recursive_closure ==\n");
-  lua_State *L = new_state();
-  lua_State *L2 = save_reload(L,
+  L = new_state();
+  L2 = save_reload(L,
     "function fib(n)\n"
     "  if n <= 1 then return n end\n"
     "  return fib(n-1) + fib(n-2)\n"
@@ -433,9 +469,11 @@ static void test_recursive_closure(void) {
 ** Test 9 – global environment integrity (_G basics)
 ** --------------------------------------------------------------------- */
 static void test_globals_env(void) {
+  lua_State *L2;
+  lua_State *L;
   printf("== test_globals_env ==\n");
-  lua_State *L = new_state();
-  lua_State *L2 = save_reload(L, "magic = 12345", std_libs);
+  L = new_state();
+  L2 = save_reload(L, "magic = 12345", std_libs);
   lua_close(L);
   if (!L2) { FAIL("reload", "NULL"); return; }
 
@@ -460,9 +498,11 @@ static void test_globals_env(void) {
 ** Test 10 – table with mixed integer/string/float keys
 ** --------------------------------------------------------------------- */
 static void test_mixed_keys(void) {
+  lua_State *L2;
+  lua_State *L;
   printf("== test_mixed_keys ==\n");
-  lua_State *L = new_state();
-  lua_State *L2 = save_reload(L,
+  L = new_state();
+  L2 = save_reload(L,
     "m = {}\n"
     "m[1]    = 'one'\n"
     "m[2]    = 'two'\n"
@@ -495,11 +535,14 @@ static void test_mixed_keys(void) {
 ** remain callable.
 ** --------------------------------------------------------------------- */
 static void test_cfunc(void) {
+  int r;
+  lua_State *L;
+  lua_State *L2;
   printf("== test_cfunc ==\n");
-  lua_State *L = new_state();
+  L = new_state();
 
   /* Save table.sort as a global; use table.concat to build a string. */
-  int r = run(L,
+  r = run(L,
     "local t = {3, 1, 4, 1, 5, 9, 2, 6}\n"
     "sort_fn = table.sort\n"
     "sort_fn(t)\n"
@@ -508,7 +551,7 @@ static void test_cfunc(void) {
   );
   if (r != LUA_OK) { FAIL("setup", "lua error"); return; }
 
-  lua_State *L2 = save_reload(L, NULL, std_libs);
+  L2 = save_reload(L, NULL, std_libs);
   lua_close(L);
   if (!L2) { FAIL("reload", "NULL"); return; }
 
@@ -576,9 +619,14 @@ static void test_cfunc(void) {
 ** in Lua 5.5's proto flag byte.
 ** --------------------------------------------------------------------- */
 static void test_vararg(void) {
+  lua_State *L2;
+  int st;
+  lua_State *L;
+  lua_State *vco;
+  int nres;
   printf("== test_vararg ==\n");
-  lua_State *L = new_state();
-  lua_State *L2 = save_reload(L,
+  L = new_state();
+  L2 = save_reload(L,
     /* PF_VAHID: plain ... passthrough */
     "function identity(...) return ... end\n"
     /* PF_VAHID: select on ... */
@@ -631,10 +679,10 @@ static void test_vararg(void) {
 
   /* vco was suspended after yielding 10; resume → 20, then 30, then done */
   get_global(L2, "vco");
-  lua_State *vco = lua_tothread(L2, -1);
+  vco = lua_tothread(L2, -1);
   lua_pop(L2, 1);
-  int nres = 0;
-  int st = lua_resume(vco, L2, 0, &nres);
+  nres = 0;
+  st = lua_resume(vco, L2, 0, &nres);
   CHECK(st == LUA_YIELD && nres == 1 && lua_tointeger(vco, -1) == 20,
         "vararg coroutine yields 20", "st=%d v=%lld",
         st, (long long)(nres ? lua_tointeger(vco, -1) : -1));
@@ -657,8 +705,12 @@ static void test_vararg(void) {
 ** standard globals (_G.package, require, etc.) and clobber custom ones.
 ** --------------------------------------------------------------------- */
 static void test_save_preserves_state(void) {
+  int rc;
+  size_t sz;
+  lua_State *L;
+  unsigned char *buf;
   printf("== test_save_preserves_state ==\n");
-  lua_State *L = new_state();
+  L = new_state();
 
   /* Install a sentinel global and override require with a custom function. */
   run(L,
@@ -677,9 +729,9 @@ static void test_save_preserves_state(void) {
   lua_pop(L, 1);
 
   /* Perform the save. */
-  unsigned char *buf = NULL;
-  size_t sz = 0;
-  int rc = lstasis_save(L, std_libs, &buf, &sz);
+  buf = NULL;
+  sz = 0;
+  rc = lstasis_save(L, std_libs, &buf, &sz);
   free(buf);
 
   CHECK(rc == 0, "save succeeds", "rc=%d", rc);
@@ -770,24 +822,32 @@ static const char GOLDEN_EMPTY_STATE[] =
 ;
 
 static void test_json_empty_state(void) {
+  int rc;
+  size_t sz;
+  FILE *fp;
+  unsigned char *buf;
+  size_t jsz;
+  lua_State *L;
+  char *json;
+  int jrc;
   printf("== test_json_empty_state ==\n");
 
   /* Use an explicit, fixed seed so the deterministic-mode objids in the
   ** golden are reproducible across processes (luaL_newstate auto-seeds
   ** from time+stack address, which would change every run). */
-  lua_State *L = lua_newstate(luaL_alloc, NULL, 0);
+  L = lua_newstate(luaL_alloc, NULL, 0);
 
-  unsigned char *buf = NULL;
-  size_t sz = 0;
-  int rc = lstasis_save(L, NULL, &buf, &sz);
+  buf = NULL;
+  sz = 0;
+  rc = lstasis_save(L, NULL, &buf, &sz);
   CHECK(rc == 0, "save empty state", "rc=%d", rc);
 
-  char  *json = NULL;
-  size_t jsz  = 0;
-  FILE  *fp   = open_memstream(&json, &jsz);
+  json = NULL;
+  jsz = 0;
+  fp = open_memstream(&json, &jsz);
   CHECK(fp != NULL, "open_memstream", "fp=NULL");
 
-  int jrc = lstasis_tojson(buf, sz, fp);
+  jrc = lstasis_tojson(buf, sz, fp);
   fclose(fp);
   CHECK(jrc == 0, "lstasis_tojson succeeds", "jrc=%d", jrc);
 

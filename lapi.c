@@ -629,12 +629,13 @@ LUA_API const char *lua_pushfstring (lua_State *L, const char *fmt, ...) {
 */
 static void lstasis_push_lcf_singleton (lua_State *L, lua_CFunction fn) {
   global_State *g = G(L);
+  TValue key;
+  TValue cached;
+  CClosure *cl;
   if (g->lcf_cache == NULL)
     g->lcf_cache = luaH_new(L);  /* lazy, GC-rooted in lgc.c */
   /* Key: a light userdata wrapping the fn pointer. */
-  TValue key;
   setpvalue(&key, cast_voidp(cast_sizet(fn)));
-  TValue cached;
   luaH_get(g->lcf_cache, &key, &cached);
   if (ttisCclosure(&cached)) {
     setobj2s(L, L->top.p, &cached);
@@ -644,7 +645,7 @@ static void lstasis_push_lcf_singleton (lua_State *L, lua_CFunction fn) {
   /* Miss: allocate; push immediately so the new white CClosure stays
   ** anchored across the table insert (which can allocate and run GC),
   ** then record it in the cache.  Leaves the value on the stack. */
-  CClosure *cl = luaF_newCclosure(L, 0);
+  cl = luaF_newCclosure(L, 0);
   cl->f = fn;
   setclCvalue(L, s2v(L->top.p), cl);
   api_incr_top(L);
