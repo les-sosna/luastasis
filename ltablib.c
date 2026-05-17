@@ -253,7 +253,14 @@ typedef unsigned int IdxT;
 ** good choice.)
 */
 #if !defined(l_randomizePivot)
+#if LUASTASIS_DETERMINISTIC
+/* Deterministic and reproducible: a constant rnd per state, but auxsort
+** retries operate on different (lo, hi) ranges, so the actual chosen
+** pivot still varies between attempts. */
+#define l_randomizePivot(L)	lua_getseed(L)
+#else
 #define l_randomizePivot(L)	luaL_makeseed(L)
+#endif
 #endif					/* } */
 
 

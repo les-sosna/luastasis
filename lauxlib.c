@@ -1129,6 +1129,7 @@ static void warnfon (void *ud, const char *message, int tocont) {
 
 
 
+#if !LUASTASIS_DETERMINISTIC
 /*
 ** A function to compute an unsigned int with some level of
 ** randomness. Rely on Address Space Layout Randomization (if present)
@@ -1175,6 +1176,7 @@ LUALIB_API unsigned int luaL_makeseed (lua_State *L) {
   UNUSED(L);
   return luai_makeseed();
 }
+#endif /* !LUASTASIS_DETERMINISTIC */
 
 
 /*
@@ -1182,7 +1184,13 @@ LUALIB_API unsigned int luaL_makeseed (lua_State *L) {
 ** as a macro.
 */
 LUALIB_API lua_State *(luaL_newstate) (void) {
+#if LUASTASIS_DETERMINISTIC
+  /* Deterministic mode: no auto-seed.  Caller must use lua_newstate
+  ** directly to pass an explicit non-zero seed for HashDOS resistance. */
+  lua_State *L = lua_newstate(luaL_alloc, NULL, 0);
+#else
   lua_State *L = lua_newstate(luaL_alloc, NULL, luaL_makeseed(NULL));
+#endif
   if (l_likely(L)) {
     lua_atpanic(L, &panic);
     lua_setwarnf(L, warnfon, L);

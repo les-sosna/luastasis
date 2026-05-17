@@ -632,7 +632,13 @@ static int math_randomseed (lua_State *L) {
   RanState *state = (RanState *)lua_touserdata(L, lua_upvalueindex(1));
   lua_Unsigned n1, n2;
   if (lua_isnone(L, 1)) {
+#if LUASTASIS_DETERMINISTIC
+    /* No auto-seed in deterministic mode: derive from the per-state
+    ** hash seed so reseeding without arguments is still reproducible. */
+    n1 = lua_getseed(L);
+#else
     n1 = luaL_makeseed(L);  /* "random" seed */
+#endif
     n2 = I2UInt(nextrand(state->s));  /* in case seed is not that random... */
   }
   else {
@@ -656,7 +662,13 @@ static const luaL_Reg randfuncs[] = {
 */
 static void setrandfunc (lua_State *L) {
   RanState *state = (RanState *)lua_newuserdatauv(L, sizeof(RanState), 0);
+#if LUASTASIS_DETERMINISTIC
+  /* Seed the PRNG from the state's hash seed — explicit and reproducible.
+  ** Caller can override at any time via math.randomseed. */
+  setseed(L, state->s, lua_getseed(L), 0);
+#else
   setseed(L, state->s, luaL_makeseed(L), 0);  /* initialize with random seed */
+#endif
   lua_pop(L, 2);  /* remove pushed seeds */
   luaL_setfuncs(L, randfuncs, 1);
 }

@@ -1351,6 +1351,13 @@ LUA_API void lua_setallocf (lua_State *L, lua_Alloc f, void *ud) {
 }
 
 
+#if LUASTASIS_DETERMINISTIC
+LUA_API unsigned int lua_getseed (lua_State *L) {
+  return G(L)->seed;
+}
+#endif
+
+
 void lua_setwarnf (lua_State *L, lua_WarnFunction f, void *ud) {
   lua_lock(L);
   G(L)->ud_warn = ud;

@@ -103,7 +103,9 @@ LUALIB_API int (luaL_loadstring) (lua_State *L, const char *s);
 
 LUALIB_API lua_State *(luaL_newstate) (void);
 
+#if !LUASTASIS_DETERMINISTIC
 LUALIB_API unsigned (luaL_makeseed) (lua_State *L);
+#endif
 
 LUALIB_API lua_Integer (luaL_len) (lua_State *L, int idx);
 
