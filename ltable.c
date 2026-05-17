@@ -1244,7 +1244,17 @@ void luaH_setint (lua_State *L, Table *t, lua_Integer key, TValue *value) {
 */
 static lua_Unsigned hash_search (lua_State *L, Table *t, unsigned asize) {
   lua_Unsigned i = asize + 1;  /* caller ensures t[i] is present */
+#if LUASTASIS_DETERMINISTIC
+  /* Mix the table's per-state objid into the seed.  A pure g->seed
+  ** would let a caller who knows the seed (or seed=0) craft a powers-
+  ** of-2 table that fixes #t to a huge boundary.  The table's objid
+  ** is a splitmix64 of (allocation order, g->seed), so even seed=0
+  ** gives every table a distinct, hard-to-predict salt — without
+  ** breaking same-program reproducibility. */
+  unsigned rnd = (unsigned)((const GCObject *)t)->objid ^ G(L)->seed;
+#else
   unsigned rnd = G(L)->seed;
+#endif
   int n = (asize > 0) ? luaO_ceillog2(asize) : 0;  /* width of 'asize' */
   unsigned mask = (1u << n) - 1;  /* 11...111 with the width of 'asize' */
   unsigned incr = (rnd & mask) + 1;  /* first increment (at least 1) */

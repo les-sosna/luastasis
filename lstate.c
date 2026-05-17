@@ -359,6 +359,7 @@ LUA_API lua_State *lua_newstate (lua_Alloc f, void *ud, unsigned seed) {
   g->seed = seed;
 #if LUASTASIS_DETERMINISTIC
   g->next_seq = 0;
+  g->lcf_cache = NULL;  /* lazily created on first lua_pushcfunction */
   /* main thread gets objid #1, derived from the seed alone */
   L->objid = lstasis_make_objid(++g->next_seq, g->seed);
 #endif

@@ -463,6 +463,11 @@ static void restartcollection (global_State *g) {
   markobject(g, mainthread(g));
   markvalue(g, &g->l_registry);
   markmt(g);
+#if LUASTASIS_DETERMINISTIC
+  /* LuaStasis: keep the lua_CFunction → CClosure cache and its CClosure
+  ** entries alive across collections. */
+  if (g->lcf_cache != NULL) markobject(g, g->lcf_cache);
+#endif
   markbeingfnz(g);  /* mark any finalizing object left from previous cycle */
 }
 
@@ -1572,6 +1577,9 @@ static void atomic (lua_State *L) {
   /* registry and global metatables may be changed by API */
   markvalue(g, &g->l_registry);
   markmt(g);  /* mark global metatables */
+#if LUASTASIS_DETERMINISTIC
+  if (g->lcf_cache != NULL) markobject(g, g->lcf_cache);
+#endif
   propagateall(g);  /* empties 'gray' list */
   /* remark occasional upvalues of (maybe) dead threads */
   remarkupvals(g);

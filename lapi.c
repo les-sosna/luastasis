@@ -617,18 +617,57 @@ LUA_API const char *lua_pushfstring (lua_State *L, const char *fmt, ...) {
 }
 
 
+#if LUASTASIS_DETERMINISTIC
+/*
+** Push the singleton CClosure that wraps `fn` for state L.  First call
+** for a given `fn` allocates a fresh closure and stores it in
+** g->lcf_cache; later calls retrieve and push.  Keeps light-C-function
+** pushes O(1)-allocation-free at steady state while still giving every
+** callable a stable GCObject identity.  The cache table and its entries
+** are kept alive by being marked as a GC root from restartcollection /
+** atomic in lgc.c.
+*/
+static void lstasis_push_lcf_singleton (lua_State *L, lua_CFunction fn) {
+  global_State *g = G(L);
+  if (g->lcf_cache == NULL)
+    g->lcf_cache = luaH_new(L);  /* lazy, GC-rooted in lgc.c */
+  /* Key: a light userdata wrapping the fn pointer. */
+  TValue key;
+  setpvalue(&key, cast_voidp(cast_sizet(fn)));
+  TValue cached;
+  luaH_get(g->lcf_cache, &key, &cached);
+  if (ttisCclosure(&cached)) {
+    setobj2s(L, L->top.p, &cached);
+    api_incr_top(L);
+    return;
+  }
+  /* Miss: allocate; push immediately so the new white CClosure stays
+  ** anchored across the table insert (which can allocate and run GC),
+  ** then record it in the cache.  Leaves the value on the stack. */
+  CClosure *cl = luaF_newCclosure(L, 0);
+  cl->f = fn;
+  setclCvalue(L, s2v(L->top.p), cl);
+  api_incr_top(L);
+  luaH_set(L, g->lcf_cache, &key, s2v(L->top.p - 1));
+  luaC_barrierback(L, obj2gco(g->lcf_cache), s2v(L->top.p - 1));
+}
+#endif
+
+
 LUA_API void lua_pushcclosure (lua_State *L, lua_CFunction fn, int n) {
   lua_lock(L);
-#if !LUASTASIS_DETERMINISTIC
-  /* Vanilla fast path: n=0 leaves the function as a light C function
-  ** stored directly in a TValue.  Deterministic mode skips this so
-  ** every callable becomes a GCObject with a stable objid. */
   if (n == 0) {
+#if LUASTASIS_DETERMINISTIC
+    /* No upvalues: reuse the per-state singleton CClosure for `fn`.
+    ** Preserves identity (ipairs{} == ipairs{}) and avoids the per-call
+    ** allocation cost that breaks memory-invariant tests. */
+    lstasis_push_lcf_singleton(L, fn);
+#else
     setfvalue(s2v(L->top.p), fn);
     api_incr_top(L);
+#endif
   }
   else
-#endif
   {
     int i;
     CClosure *cl;
