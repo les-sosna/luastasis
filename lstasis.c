@@ -565,7 +565,7 @@ static void process_obj(SerState *s, ObjQ *q, GCObject *o) {
     for (unsigned i = 0; i < sizenode(t); i++) {
       Node *n = &t->node[i];
       if (!keyisnil(n)) {
-        TValue k; getnodekey(NULL, &k, n);
+        TValue k; getnodekey(((lua_State *)NULL), &k, n);
         discover_tv(s, q, &k);
         discover_tv(s, q, &n->i_val);
       }
@@ -690,7 +690,7 @@ static void wobj_table(WBuf *b, SerState *s, Table *t) {
   for (unsigned i = 0; i < sizenode(t); i++) {
     Node *n = &t->node[i];
     if (!keyisnil(n) && !tagisempty(rawtt(&n->i_val))) {
-      TValue key; getnodekey(NULL, &key, n);
+      TValue key; getnodekey(((lua_State *)NULL), &key, n);
       write_tv(b, s, &key);
       write_tv(b, s, &n->i_val);
     }
