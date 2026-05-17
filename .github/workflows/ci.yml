@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [stasis5.5]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode:
+          - { name: vanilla, flag: "" }
+          - { name: deterministic, flag: "DETERMINISTIC=1" }
+    name: ${{ matrix.mode.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Build (${{ matrix.mode.name }})
+        run: make ${{ matrix.mode.flag }} lua test_serial test_determinism lstasis_tojson
+
+      - name: LuaStasis serialization tests
+        run: ./test_serial
+
+      - name: LuaStasis determinism tests
+        run: ./test_determinism
+
+      - name: Upstream Lua test suite
+        working-directory: testes
+        # Run the test files that don't require the internal `T` library
+        # (which needs -DLUA_USER_H='"ltests.h"' at build time) and aren't
+        # tied to readline/standalone-interpreter shell quirks (main.lua).
+        run: |
+          set -e
+          TESTS="calls closure goto literals locals constructs errors events \
+                 math sort vararg utf8 strings pm nextvar coroutine gc"
+          for f in $TESTS; do
+            echo "::group::$f.lua"
+            ../lua -e "_U=true; _port=true; _soft=true" -e "dofile('$f.lua')"
+            echo "::endgroup::"
+          done
