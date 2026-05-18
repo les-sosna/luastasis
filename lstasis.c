@@ -434,13 +434,12 @@ static void wb_patch_u32(WBuf *b, size_t pos, uint32_t v) {
 typedef struct { const uint8_t *data; size_t pos; size_t size; } RBuf;
 
 static int rb_ok(const RBuf *b, size_t need) { return b->pos + need <= b->size; }
-#define RB_READ(b,T) ({ T _v; memcpy(&_v,(b)->data+(b)->pos,sizeof(T)); (b)->pos+=sizeof(T); _v; })
-static uint8_t  rb_u8 (RBuf *b) { return RB_READ(b, uint8_t ); }
-static uint16_t rb_u16(RBuf *b) { return RB_READ(b, uint16_t); }
-static uint32_t rb_u32(RBuf *b) { return RB_READ(b, uint32_t); }
-static int32_t  rb_i32(RBuf *b) { return RB_READ(b, int32_t ); }
-static uint64_t rb_u64(RBuf *b) { return RB_READ(b, uint64_t); }
-static double   rb_dbl(RBuf *b) { return RB_READ(b, double  ); }
+static uint8_t  rb_u8 (RBuf *b) { uint8_t  v; memcpy(&v, b->data + b->pos, sizeof(v)); b->pos += sizeof(v); return v; }
+static uint16_t rb_u16(RBuf *b) { uint16_t v; memcpy(&v, b->data + b->pos, sizeof(v)); b->pos += sizeof(v); return v; }
+static uint32_t rb_u32(RBuf *b) { uint32_t v; memcpy(&v, b->data + b->pos, sizeof(v)); b->pos += sizeof(v); return v; }
+static int32_t  rb_i32(RBuf *b) { int32_t  v; memcpy(&v, b->data + b->pos, sizeof(v)); b->pos += sizeof(v); return v; }
+static uint64_t rb_u64(RBuf *b) { uint64_t v; memcpy(&v, b->data + b->pos, sizeof(v)); b->pos += sizeof(v); return v; }
+static double   rb_dbl(RBuf *b) { double   v; memcpy(&v, b->data + b->pos, sizeof(v)); b->pos += sizeof(v); return v; }
 
 /* Skip one TValue in the read buffer (used in pass-1 size scanning). */
 static void rb_skip_tv(RBuf *rb) {

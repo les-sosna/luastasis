@@ -82,7 +82,7 @@ static int   g_depth = 0;
 static FILE *g_out   = NULL;
 
 /* Newline + indentation */
-static void jnl(void) {
+static void jsonnl(void) {
   fputc('\n', g_out);
   for (int i = 0; i < g_depth; i++) fputs("  ", g_out);
 }
@@ -104,7 +104,7 @@ static void jstr_bytes(const uint8_t *data, size_t len) {
 }
 
 static void jkey(const char *k) {
-  jnl();
+  jsonnl();
   fprintf(g_out, "\"%s\": ", k);
 }
 
@@ -178,7 +178,7 @@ static void dump_table(RBuf *rb) {
   g_depth++;
   for (uint32_t i = 0; i < cnt; i++) {
     if (i > 0) fputc(',', g_out);
-    jnl(); fputs("{\"key\":", g_out);
+    jsonnl(); fputs("{\"key\":", g_out);
     jtv(rb);
     fputs(", \"val\":", g_out);
     jtv(rb);
@@ -186,7 +186,7 @@ static void dump_table(RBuf *rb) {
     if (rb->err) break;
   }
   g_depth--;
-  if (cnt > 0) jnl();
+  if (cnt > 0) jsonnl();
   fputc(']', g_out);
 
   mt = rb_u32(rb);
@@ -243,7 +243,7 @@ static void dump_proto(RBuf *rb) {
     uint32_t nid;
     uint8_t ins, idx, knd;
     if (i > 0) fputc(',', g_out);
-    jnl();
+    jsonnl();
     nid = rb_u32(rb);
     ins = rb_u8(rb);
     idx = rb_u8(rb);
@@ -253,7 +253,7 @@ static void dump_proto(RBuf *rb) {
     fprintf(g_out, ", \"instack\":%u, \"idx\":%u, \"kind\":%u}", ins, idx, knd);
   }
   g_depth--;
-  if (nuv > 0) jnl();
+  if (nuv > 0) jsonnl();
   fputc(']', g_out);
 
   nline = rb_u32(rb);
@@ -268,7 +268,7 @@ static void dump_proto(RBuf *rb) {
     int32_t epc, spc;
     uint32_t vid;
     if (i > 0) fputc(',', g_out);
-    jnl();
+    jsonnl();
     vid = rb_u32(rb);
     spc = rb_i32(rb);
     epc = rb_i32(rb);
@@ -277,7 +277,7 @@ static void dump_proto(RBuf *rb) {
     fprintf(g_out, ", \"startpc\":%d, \"endpc\":%d}", spc, epc);
   }
   g_depth--;
-  if (nloc > 0) jnl();
+  if (nloc > 0) jsonnl();
   fputc(']', g_out);
 
   src = rb_u32(rb);
@@ -323,12 +323,12 @@ static void dump_cclosure(RBuf *rb) {
   g_depth++;
   for (int i = 0; i < (int)nuv; i++) {
     if (i > 0) fputc(',', g_out);
-    jnl();
+    jsonnl();
     jtv(rb);
     if (rb->err) break;
   }
   g_depth--;
-  if (nuv > 0) jnl();
+  if (nuv > 0) jsonnl();
   fputc(']', g_out);
 }
 
@@ -361,11 +361,11 @@ static void dump_thread(RBuf *rb) {
   g_depth++;
   for (int32_t i = 0; i < nstack; i++) {
     if (i > 0) fputc(',', g_out);
-    jnl(); jtv(rb);
+    jsonnl(); jtv(rb);
     if (rb->err) break;
   }
   g_depth--;
-  if (nstack > 0) jnl();
+  if (nstack > 0) jsonnl();
   fputc(']', g_out);
 
   nci = rb_i32(rb);
@@ -378,7 +378,7 @@ static void dump_thread(RBuf *rb) {
     uint8_t is_lua;
     int32_t u2v;
     if (j > 0) fputc(',', g_out);
-    jnl();
+    jsonnl();
     is_lua = rb_u8(rb);
     foff = rb_i32(rb);
     toff = rb_i32(rb);
@@ -398,7 +398,7 @@ static void dump_thread(RBuf *rb) {
     if (rb->err) break;
   }
   g_depth--;
-  if (nci > 0) jnl();
+  if (nci > 0) jsonnl();
   fputc(']', g_out);
 
   nopen = rb_u32(rb);
@@ -528,13 +528,13 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
   }
   fputc(']', g_out);
   g_depth--;
-  jnl(); fputs("},", g_out);
+  jsonnl(); fputs("},", g_out);
 
   jkey("objects"); fputc('{', g_out);
   g_depth++;
   for (uint32_t i = 0; i < num_objects; i++) {
     if (i > 0) fputc(',', g_out);
-    jnl(); fprintf(g_out, "\"%u\": {", i + 1);
+    jsonnl(); fprintf(g_out, "\"%u\": {", i + 1);
     g_depth++;
 
     fprintf(g_out, "\"type\":\"%s\", \"objid\":\"0x%016" PRIx64 "\"",
@@ -560,13 +560,13 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
 
     g_depth--;
     if (obj_is_single_line(types[i]) && !rb.err) fputc('}', g_out);
-    else { jnl(); fputc('}', g_out); }
+    else { jsonnl(); fputc('}', g_out); }
   }
   g_depth--;
-  jnl(); fputc('}', g_out);
+  jsonnl(); fputc('}', g_out);
 
   g_depth--;
-  jnl(); fputc('}', g_out); fputc('\n', g_out);
+  jsonnl(); fputc('}', g_out); fputc('\n', g_out);
 
   free(types);
   free(objids);
