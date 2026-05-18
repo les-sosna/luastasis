@@ -29,7 +29,7 @@ jobs:
         run: |
           make ${{ matrix.mode.flag }} \
                TESTS='-DLUA_USER_H="\"ltests.h\"" -DLUA_USE_APICHECK -Og -g' \
-               lua test_serial test_determinism lstasis_tojson
+               lua test_serial test_determinism test_json lstasis_tojson
 
       - name: Build upstream test C libs
         run: make -C testes/libs
@@ -39,6 +39,11 @@ jobs:
 
       - name: LuaStasis determinism tests
         run: ./test_determinism
+
+      - name: LuaStasis JSON snapshot tests
+        # Goldens are only stable in deterministic builds.
+        if: matrix.mode.name == 'deterministic'
+        run: ./test_json
 
       - name: Upstream Lua test suite (full, with T library)
         working-directory: testes
