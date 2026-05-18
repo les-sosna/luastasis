@@ -18,6 +18,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Install libreadline (needed by testes/main.lua readline test)
+        # The test runs `lua -E -i` and expects the warning handler to be
+        # silent.  With -E the LUA_READLINELIB env override is ignored, so
+        # lua falls back to dlopen("libreadline.so") -- which only resolves
+        # when the -dev package is installed.
+        run: sudo apt-get update && sudo apt-get install -y libreadline-dev
+
       - name: Build (${{ matrix.mode.name }}, full test mode + API checks)
         run: |
           make ${{ matrix.mode.flag }} \
