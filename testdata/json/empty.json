@@ -2,17 +2,18 @@
   "format": "lstasis",
   "num_objects": 3,
   "next_seq": "0x0000000000000035",
+  "seed": "0x00000000",
   "roots": {
     "registry": 1,
     "main_thread": 2,
     "type_metatables": [null,null,null,null,null,null,null,null,null]
   },
   "objects": {
-    "1": {"type":"table", "objid":"0xdbd238973a2b148a", "entry_count":3, "entries":[
-        {"key":{"int":1}, "val":{"bool":false}},
-        {"key":{"int":2}, "val":{"ref":3}},
-        {"key":{"int":3}, "val":{"ref":2}}
-      ], "metatable":null, "asize":3
+    "1": {"type":"table", "objid":"0xdbd238973a2b148a", "array":[
+        {"idx":0, "val":{"bool":false}},
+        {"idx":1, "val":{"ref":3}},
+        {"idx":2, "val":{"ref":2}}
+      ], "hash":[], "metatable":null, "asize":3, "hsize":1
     },
     "2": {"type":"thread", "objid":"0x5692161d100b05e5", "status":0, "status_name":"ok", "stack_size":1, "stack":[
         null
@@ -20,7 +21,7 @@
         {"is_lua":false, "func_slot":0, "top_slot":21, "callstatus":32768}
       ], "open_upvalues":[]
     },
-    "3": {"type":"table", "objid":"0x1e535eede31428f0", "entry_count":0, "entries":[], "metatable":null, "asize":0
+    "3": {"type":"table", "objid":"0x1e535eede31428f0", "array":[], "hash":[], "metatable":null, "asize":0, "hsize":1
     }
   }
 }

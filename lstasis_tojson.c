@@ -172,21 +172,41 @@ static void dump_string(RBuf *rb) {
 
 static void dump_table(RBuf *rb) {
   uint32_t mt;
-  uint32_t cnt = rb_u32(rb);
-  fprintf(g_out, ", \"entry_count\":%u", cnt);
-  fputs(", \"entries\":[", g_out);
+  uint32_t acount = rb_u32(rb);
+  uint32_t hcount;
+  uint32_t i;
+  fprintf(g_out, ", \"array\":[");
   g_depth++;
-  for (uint32_t i = 0; i < cnt; i++) {
+  for (i = 0; i < acount; i++) {
+    uint32_t idx = rb_u32(rb);
     if (i > 0) fputc(',', g_out);
-    jsonnl(); fputs("{\"key\":", g_out);
-    jtv(rb);
-    fputs(", \"val\":", g_out);
+    jsonnl(); fprintf(g_out, "{\"idx\":%u, \"val\":", idx);
     jtv(rb);
     fputc('}', g_out);
     if (rb->err) break;
   }
   g_depth--;
-  if (cnt > 0) jsonnl();
+  if (acount > 0) jsonnl();
+  fputc(']', g_out);
+
+  hcount = rb_u32(rb);
+  fprintf(g_out, ", \"hash\":[");
+  g_depth++;
+  for (i = 0; i < hcount; i++) {
+    uint32_t idx;
+    int32_t nxt;
+    if (i > 0) fputc(',', g_out);
+    idx = rb_u32(rb);
+    jsonnl(); fprintf(g_out, "{\"idx\":%u, \"key\":", idx);
+    jtv(rb);
+    fputs(", \"val\":", g_out);
+    jtv(rb);
+    nxt = rb_i32(rb);
+    fprintf(g_out, ", \"next\":%d}", nxt);
+    if (rb->err) break;
+  }
+  g_depth--;
+  if (hcount > 0) jsonnl();
   fputc(']', g_out);
 
   mt = rb_u32(rb);
@@ -194,6 +214,7 @@ static void dump_table(RBuf *rb) {
   else fputs(", \"metatable\":null", g_out);
 
   fprintf(g_out, ", \"asize\":%u", rb_u32(rb));
+  fprintf(g_out, ", \"hsize\":%u", rb_u32(rb));
 }
 
 static void dump_proto(RBuf *rb) {
@@ -450,6 +471,7 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
   uint64_t *objids;
   size_t *offsets;
   uint64_t next_seq;
+  uint32_t seed;
   uint32_t num_objects;
   uint32_t registry_id;
   uint32_t main_thread_id;
@@ -457,9 +479,9 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
   RBuf rb = { (const uint8_t *)buf, 0, sz, 0 };
   g_out = out;
 
-  /* Format: [next_seq:u64] {objects...} [registry:u32 main:u32
-  ** mt:u32×LUA_NUMTYPES].  Objects span byte 8 → (size - footer). */
-  header_size = 8;
+  /* Format: [next_seq:u64][seed:u32] {objects...} [registry:u32
+  ** main:u32 mt:u32×LUA_NUMTYPES]. */
+  header_size = 8 + 4;
   footer_size = (size_t)(4 + 4 + LUA_NUMTYPES * 4);
   if (rb.size < header_size + footer_size) {
     fprintf(stderr, "lstasis_tojson: buffer too small for header+footer\n");
@@ -468,6 +490,7 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
   objects_end = rb.size - footer_size;
 
   next_seq = rb_u64(&rb);
+  seed     = rb_u32(&rb);
   if (rb.err) { fprintf(stderr, "lstasis_tojson: truncated header\n"); return 1; }
 
   /* Index pass: record type code, objid, and data offset for each object.
@@ -516,6 +539,7 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
   jkey("num_objects"); fprintf(g_out, "%u,", num_objects);
   jkey("next_seq");
   fprintf(g_out, "\"0x%016" PRIx64 "\",", next_seq);
+  jkey("seed"); fprintf(g_out, "\"0x%08" PRIx32 "\",", seed);
 
   jkey("roots"); fputs("{", g_out);
   g_depth++;
