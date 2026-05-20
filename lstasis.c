@@ -434,13 +434,12 @@ static void wb_patch_u32(WBuf *b, size_t pos, uint32_t v) {
 typedef struct { const uint8_t *data; size_t pos; size_t size; } RBuf;
 
 static int rb_ok(const RBuf *b, size_t need) { return b->pos + need <= b->size; }
-#define RB_READ(b,T) ({ T _v; memcpy(&_v,(b)->data+(b)->pos,sizeof(T)); (b)->pos+=sizeof(T); _v; })
-static uint8_t  rb_u8 (RBuf *b) { return RB_READ(b, uint8_t ); }
-static uint16_t rb_u16(RBuf *b) { return RB_READ(b, uint16_t); }
-static uint32_t rb_u32(RBuf *b) { return RB_READ(b, uint32_t); }
-static int32_t  rb_i32(RBuf *b) { return RB_READ(b, int32_t ); }
-static uint64_t rb_u64(RBuf *b) { return RB_READ(b, uint64_t); }
-static double   rb_dbl(RBuf *b) { return RB_READ(b, double  ); }
+static uint8_t  rb_u8 (RBuf *b) { uint8_t  v; memcpy(&v, b->data + b->pos, sizeof(v)); b->pos += sizeof(v); return v; }
+static uint16_t rb_u16(RBuf *b) { uint16_t v; memcpy(&v, b->data + b->pos, sizeof(v)); b->pos += sizeof(v); return v; }
+static uint32_t rb_u32(RBuf *b) { uint32_t v; memcpy(&v, b->data + b->pos, sizeof(v)); b->pos += sizeof(v); return v; }
+static int32_t  rb_i32(RBuf *b) { int32_t  v; memcpy(&v, b->data + b->pos, sizeof(v)); b->pos += sizeof(v); return v; }
+static uint64_t rb_u64(RBuf *b) { uint64_t v; memcpy(&v, b->data + b->pos, sizeof(v)); b->pos += sizeof(v); return v; }
+static double   rb_dbl(RBuf *b) { double   v; memcpy(&v, b->data + b->pos, sizeof(v)); b->pos += sizeof(v); return v; }
 
 /* Skip one TValue in the read buffer (used in pass-1 size scanning). */
 static void rb_skip_tv(RBuf *rb) {
@@ -650,7 +649,18 @@ static void write_tv(WBuf *b, SerState *s, const TValue *v) {
     wb_u16(b, nlen);
     wb_write(b, name, nlen);
   } else if (iscollectable(v)) {
-    wb_u8(b, rawtt(v)); wb_u32(b, ser_get_id(s, gcvalue(v)));
+    /* Full userdata (LUA_TUSERDATA) is unsupported by discover_obj, so
+    ** it never gets an id. If this always wrote `tag + 0` (5 bytes) then
+    ** the loader would resolve a zero id back to nil anyway — but a save of
+    ** the post-load state then would write LUA_VNIL (1 byte), making the
+    ** roundtrip non-byte-identical. Substitute nil directly here so
+    ** original and re-saved snapshots match. */
+    if (novariant(rawtt(v)) == LUA_TUSERDATA) {
+      wb_u8(b, LUA_VNIL);
+    } else {
+      wb_u8(b, rawtt(v));
+      wb_u32(b, ser_get_id(s, gcvalue(v)));
+    }
   } else if (ttisnil(v) || ttisboolean(v)) {
     wb_u8(b, rawtt(v));
   } else {
@@ -668,31 +678,53 @@ static void wobj_string(WBuf *b, TString *ts) {
   wb_write(b, str, len);
 }
 
+/*
+** Table format:
+**   acount : u32                          - number of non-empty array slots
+**   acount * { idx:u32, val:TValue }      - array entries in slot order
+**   hsize : u32                           - hash-part capacity (sizenode)
+**   hsize * slot                          - one entry per hash slot in order
+**     slot.key  : TValue                    nil key => empty slot, stop here
+**     if key is non-nil:
+**       slot.val  : TValue
+**       slot.next : i32                     gnext offset, 0 = end of chain
+**   mt_id : u32
+**   asize : u32                           - array-part capacity
+**
+** Hash entries are written in slot order with the slot index implicit in
+** the stream position, so the loader cannot be fed an out-of-range idx.
+** An empty slot is just a single TV_NIL tag byte (1 byte) — cheap for
+** sparse hash parts. Reproducing the exact node layout lets lstasis_load
+** place each entry directly into the same node it occupied in the source;
+** the loader's per-entry luaH_set replay would otherwise go through Lua's
+** path-dependent collision-displacement algorithm and end up with a
+** different t->node[i] order than the original.
+*/
 static void wobj_table(WBuf *b, SerState *s, Table *t) {
-  uint32_t cnt = 0;
-  for (unsigned i = 0; i < t->asize; i++)
-    if (!tagisempty(*getArrTag(t, i))) cnt++;
-  for (unsigned i = 0; i < sizenode(t); i++) {
-    Node *n = &t->node[i];
-    if (!keyisnil(n) && !tagisempty(rawtt(&n->i_val))) cnt++;
-  }
-  wb_u32(b, cnt);
-  for (unsigned i = 0; i < t->asize; i++) {
+  uint32_t acount = 0;
+  unsigned i;
+  for (i = 0; i < t->asize; i++)
+    if (!tagisempty(*getArrTag(t, i))) acount++;
+  wb_u32(b, acount);
+  for (i = 0; i < t->asize; i++) {
     lu_byte tag = *getArrTag(t, i);
     if (!tagisempty(tag)) {
-      TValue key, val;
-      setivalue(&key, (lua_Integer)(i + 1));
+      TValue val;
       arr2obj(t, i, &val);
-      write_tv(b, s, &key);
+      wb_u32(b, (uint32_t)i);
       write_tv(b, s, &val);
     }
   }
-  for (unsigned i = 0; i < sizenode(t); i++) {
+  wb_u32(b, (uint32_t)sizenode(t));
+  for (i = 0; i < sizenode(t); i++) {
     Node *n = &t->node[i];
-    if (!keyisnil(n) && !tagisempty(rawtt(&n->i_val))) {
+    if (keyisnil(n) || tagisempty(rawtt(&n->i_val))) {
+      wb_u8(b, TV_NIL);  /* empty-slot marker */
+    } else {
       TValue key; getnodekey(((lua_State *)NULL), &key, n);
       write_tv(b, s, &key);
       write_tv(b, s, &n->i_val);
+      wb_i32(b, (int32_t)gnext(n));
     }
   }
   wb_u32(b, t->metatable ? ser_get_id(s, obj2gco(t->metatable)) : ID_NULL);
@@ -874,16 +906,23 @@ int lstasis_save(lua_State *L, const lstasis_Lib *libs,
   build_cfmap_for_save(&s.cfm, libs);
   discover_all(&s, L);
   wb_init(&b);
-  /* Header: [next_seq:u64].  Objects fill the space between the header
-  ** and the fixed-size roots footer; the loader derives the object
-  ** count and section bounds from the buffer size and footer size, so
-  ** no attacker-supplied count needs validation and index arrays can
-  ** be sized once with no live reallocations. */
+  /* Header: [next_seq:u64][seed:u32].  Objects fill the space between
+  ** the header and the fixed-size roots footer; the loader derives the
+  ** object count and section bounds from the buffer size and footer
+  ** size, so no attacker-supplied count needs validation and index
+  ** arrays can be sized once with no live reallocations.
+  **
+  ** The seed is the per-state value Lua uses to hash short strings;
+  ** lstasis_load recreates the state with this same seed so interned
+  ** strings end up in the same node slots as the source state. This is
+  ** required for the table-layout reconstruction in fill_table, which
+  ** places each hash entry at its saved t->node[i] index. */
 #if LUASTASIS_DETERMINISTIC
   wb_u64(&b, (uint64_t)G(L)->next_seq);
 #else
   wb_u64(&b, 0);  /* placeholder — only meaningful in deterministic mode */
 #endif
+  wb_u32(&b, (uint32_t)G(L)->seed);
   for (uint32_t i = 0; i < s.num_objs; i++)
     write_obj(&b, &s, s.ordered[i]);
 
@@ -927,8 +966,13 @@ typedef struct {
 
 /* read a TValue from the read buffer; GC pointers resolved from id_to_ptr */
 static TValue ds_read_tv(DeserState *d) {
+  /* Zero-init the whole TValue (including alignment padding) — callers
+  ** may copy the returned struct verbatim, and reading uninitialised
+  ** bytes is undefined behaviour the optimiser is free to exploit. */
   TValue v;
-  uint8_t tag = rb_u8(&d->rb);
+  uint8_t tag;
+  memset(&v, 0, sizeof v);
+  tag = rb_u8(&d->rb);
   v.tt_ = tag;
   if (tag == CFUNC_TAG) {
     lua_CFunction fn;
@@ -1123,20 +1167,62 @@ static void fill_upval_closed(DeserState *d, UpVal *uv) {
 
 static void fill_table(DeserState *d, Table *t) {
   uint32_t mt_id;
-  lua_State *L = d->L;
-  RBuf *rb     = &d->rb;
-  uint32_t cnt = rb_u32(rb);
-  for (uint32_t i = 0; i < cnt; i++) {
-    TValue key = ds_read_tv(d);
+  RBuf *rb       = &d->rb;
+  uint32_t acount = rb_u32(rb);
+  uint32_t hsize;
+  uint32_t e;
+  /* Array entries: indexed write straight into the pre-sized array part. */
+  for (e = 0; e < acount; e++) {
+    uint32_t idx = rb_u32(rb);
     TValue val = ds_read_tv(d);
-    if (ttisinteger(&key))
-      luaH_setint(L, t, ivalue(&key), &val);
-    else
-      luaH_set(L, t, &key, &val);
+    if (idx < t->asize)
+      obj2arr(t, idx, &val);
+  }
+  hsize = rb_u32(rb);
+  /* Hash entries: one record per slot in slot order — the slot index is
+  ** implicit in the iteration counter, so a malformed snapshot cannot
+  ** force an out-of-range slot write. A nil-tagged key is the empty-slot
+  ** marker (slot was already initialized empty by luaH_resize in Pass 1,
+  ** so we just skip it). We bypass luaH_set entirely — that would re-run
+  ** the insertion algorithm and route entries to different slots than
+  ** where they came from. nxt still needs a bounds check (attacker-
+  ** controlled) and float keys still need a NaN check. */
+  for (e = 0; e < hsize; e++) {
+    TValue key = ds_read_tv(d);
+    TValue val;
+    int32_t nxt;
+    Node *n;
+    if (ttisnil(&key)) continue;  /* empty slot — leave as initialized */
+    val = ds_read_tv(d);
+    nxt = rb_i32(rb);
+    if (ttisfloat(&key) && luai_numisnan(fltvalue(&key))) {
+      if (!d->error) {
+        d->error = 1;
+        snprintf(d->errmsg, sizeof(d->errmsg),
+                 "corrupt table hash entry: NaN key at slot %u", (unsigned)e);
+      }
+      continue;
+    }
+    if (nxt != 0 &&
+        ((int64_t)e + (int64_t)nxt < 0 ||
+         (int64_t)e + (int64_t)nxt >= (int64_t)hsize)) {
+      if (!d->error) {
+        d->error = 1;
+        snprintf(d->errmsg, sizeof(d->errmsg),
+                 "corrupt table hash entry: chain target out of range"
+                 " (slot=%u, nxt=%d, size=%u)",
+                 (unsigned)e, (int)nxt, (unsigned)hsize);
+      }
+      continue;
+    }
+    n = gnode(t, e);
+    setnodekey(n, &key);
+    setobj2t(d->L, gval(n), &val);
+    gnext(n) = nxt;
   }
   mt_id = rb_u32(rb);
   t->metatable    = mt_id ? (Table *)d->id_to_ptr[mt_id] : NULL;
-  (void)rb_u32(rb);
+  (void)rb_u32(rb);  /* asize (already applied in Pass 1) */
 }
 
 static void fill_thread(DeserState *d, lua_State *th, int is_main) {
@@ -1258,6 +1344,7 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   uint32_t main_thread_id;
   size_t objects_end;
   uint64_t saved_next_seq;
+  uint32_t saved_seed;
   uint32_t registry_id;
   uint32_t mt_ids[LUA_NUMTYPES];
   lua_State *L;
@@ -1268,10 +1355,10 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   d.rb.size = size;
   cfrev_init(&d.cfrev);
 
-  /* Format: [next_seq:u64] {objects...} [registry:u32 main:u32
+  /* Format: [next_seq:u64][seed:u32] {objects...} [registry:u32 main:u32
   ** mt:u32×LUA_NUMTYPES].  The roots footer is fixed-size, so the
-  ** object section is everything between byte 8 and (size - footer). */
-  header_size = 8;  /* next_seq */
+  ** object section is everything between the header and (size - footer). */
+  header_size = 8 + 4;  /* next_seq + seed */
   footer_size = (size_t)(4 + 4 + LUA_NUMTYPES * 4);
   if (size < header_size + footer_size) return NULL;
   objects_end = size - footer_size;
@@ -1279,6 +1366,7 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   if (!rb_ok(&d.rb, header_size)) return NULL;
   saved_next_seq = rb_u64(&d.rb);
   (void)saved_next_seq;  /* used only in deterministic mode below */
+  saved_seed = rb_u32(&d.rb);
 
   /* Each object header is at least 1+8+4 = 13 bytes (type, objid, size).
   ** This bounds how many objects can fit and is what we allocate the
@@ -1308,7 +1396,13 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   main_thread_id = rb_u32(&d.rb);
   for (int i = 0; i < LUA_NUMTYPES; i++) mt_ids[i] = rb_u32(&d.rb);
 
-  L = luaL_newstate();
+  /* Create the new state with the saved seed.  String hashes depend on
+  ** g->seed (set once, before luaS_init runs and interns the first set
+  ** of fixed strings), so a fresh random seed here would place loaded
+  ** entries at node slots that don't match where lookups later probe.
+  ** Go through lua_newstate directly — luaL_newstate would force a
+  ** fresh seed (random in vanilla mode, zero in deterministic). */
+  L = lua_newstate(luaL_alloc, NULL, (unsigned)saved_seed);
   if (!L) goto fail_pre;
   d.L              = L;
   d.main_thread_id = main_thread_id;
@@ -1345,14 +1439,26 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
     }
     case OBJ_TABLE: {
       Table *t;
-      uint32_t asize;
-      uint32_t cnt = rb_u32(&d.rb);
-      /* skip entries: each key+value pair uses rb_skip_tv twice */
-      for (uint32_t e = 0; e < cnt * 2; e++) rb_skip_tv(&d.rb);
-      (void)rb_u32(&d.rb); /* mt_id */
+      uint32_t asize, hsize;
+      uint32_t acount = rb_u32(&d.rb);
+      /* skip array entries: idx + value */
+      for (uint32_t e = 0; e < acount; e++) {
+        (void)rb_u32(&d.rb);  /* idx */
+        rb_skip_tv(&d.rb);
+      }
+      hsize = rb_u32(&d.rb);
+      /* skip hash entries: per slot, key first; nil key (single byte) = empty */
+      for (uint32_t e = 0; e < hsize; e++) {
+        size_t before = d.rb.pos;
+        rb_skip_tv(&d.rb);          /* key */
+        if (d.rb.data[before] == TV_NIL) continue;  /* empty slot */
+        rb_skip_tv(&d.rb);          /* val */
+        (void)rb_i32(&d.rb);        /* next */
+      }
+      (void)rb_u32(&d.rb);    /* mt_id */
       asize = rb_u32(&d.rb);
       t = luaH_new(L);
-      if (asize > 0) luaH_resize(L, t, asize, 0);
+      if (asize > 0 || hsize > 0) luaH_resize(L, t, asize, hsize);
       d.id_to_ptr[id] = t;
       break;
     }

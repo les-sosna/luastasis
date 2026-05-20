@@ -82,7 +82,7 @@ static int   g_depth = 0;
 static FILE *g_out   = NULL;
 
 /* Newline + indentation */
-static void jnl(void) {
+static void jsonnl(void) {
   fputc('\n', g_out);
   for (int i = 0; i < g_depth; i++) fputs("  ", g_out);
 }
@@ -104,7 +104,7 @@ static void jstr_bytes(const uint8_t *data, size_t len) {
 }
 
 static void jkey(const char *k) {
-  jnl();
+  jsonnl();
   fprintf(g_out, "\"%s\": ", k);
 }
 
@@ -172,21 +172,48 @@ static void dump_string(RBuf *rb) {
 
 static void dump_table(RBuf *rb) {
   uint32_t mt;
-  uint32_t cnt = rb_u32(rb);
-  fprintf(g_out, ", \"entry_count\":%u", cnt);
-  fputs(", \"entries\":[", g_out);
+  uint32_t acount = rb_u32(rb);
+  uint32_t hsize;
+  uint32_t i;
+  fprintf(g_out, ", \"array\":[");
   g_depth++;
-  for (uint32_t i = 0; i < cnt; i++) {
+  for (i = 0; i < acount; i++) {
+    uint32_t idx = rb_u32(rb);
     if (i > 0) fputc(',', g_out);
-    jnl(); fputs("{\"key\":", g_out);
-    jtv(rb);
-    fputs(", \"val\":", g_out);
+    jsonnl(); fprintf(g_out, "{\"idx\":%u, \"val\":", idx);
     jtv(rb);
     fputc('}', g_out);
     if (rb->err) break;
   }
   g_depth--;
-  if (cnt > 0) jnl();
+  if (acount > 0) jsonnl();
+  fputc(']', g_out);
+
+  hsize = rb_u32(rb);
+  fprintf(g_out, ", \"hsize\":%u, \"hash\":[", hsize);
+  g_depth++;
+  for (i = 0; i < hsize; i++) {
+    size_t before;
+    int32_t nxt;
+    if (i > 0) fputc(',', g_out);
+    jsonnl();
+    before = rb->pos;
+    fprintf(g_out, "{\"idx\":%u", i);
+    if (rb->pos < rb->size && rb->data[before] == TV_NIL) {
+      rb_u8(rb);  /* consume the empty-slot marker */
+      fputs(", \"empty\":true}", g_out);
+      continue;
+    }
+    fputs(", \"key\":", g_out);
+    jtv(rb);
+    fputs(", \"val\":", g_out);
+    jtv(rb);
+    nxt = rb_i32(rb);
+    fprintf(g_out, ", \"next\":%d}", nxt);
+    if (rb->err) break;
+  }
+  g_depth--;
+  if (hsize > 0) jsonnl();
   fputc(']', g_out);
 
   mt = rb_u32(rb);
@@ -243,7 +270,7 @@ static void dump_proto(RBuf *rb) {
     uint32_t nid;
     uint8_t ins, idx, knd;
     if (i > 0) fputc(',', g_out);
-    jnl();
+    jsonnl();
     nid = rb_u32(rb);
     ins = rb_u8(rb);
     idx = rb_u8(rb);
@@ -253,7 +280,7 @@ static void dump_proto(RBuf *rb) {
     fprintf(g_out, ", \"instack\":%u, \"idx\":%u, \"kind\":%u}", ins, idx, knd);
   }
   g_depth--;
-  if (nuv > 0) jnl();
+  if (nuv > 0) jsonnl();
   fputc(']', g_out);
 
   nline = rb_u32(rb);
@@ -268,7 +295,7 @@ static void dump_proto(RBuf *rb) {
     int32_t epc, spc;
     uint32_t vid;
     if (i > 0) fputc(',', g_out);
-    jnl();
+    jsonnl();
     vid = rb_u32(rb);
     spc = rb_i32(rb);
     epc = rb_i32(rb);
@@ -277,7 +304,7 @@ static void dump_proto(RBuf *rb) {
     fprintf(g_out, ", \"startpc\":%d, \"endpc\":%d}", spc, epc);
   }
   g_depth--;
-  if (nloc > 0) jnl();
+  if (nloc > 0) jsonnl();
   fputc(']', g_out);
 
   src = rb_u32(rb);
@@ -323,12 +350,12 @@ static void dump_cclosure(RBuf *rb) {
   g_depth++;
   for (int i = 0; i < (int)nuv; i++) {
     if (i > 0) fputc(',', g_out);
-    jnl();
+    jsonnl();
     jtv(rb);
     if (rb->err) break;
   }
   g_depth--;
-  if (nuv > 0) jnl();
+  if (nuv > 0) jsonnl();
   fputc(']', g_out);
 }
 
@@ -361,11 +388,11 @@ static void dump_thread(RBuf *rb) {
   g_depth++;
   for (int32_t i = 0; i < nstack; i++) {
     if (i > 0) fputc(',', g_out);
-    jnl(); jtv(rb);
+    jsonnl(); jtv(rb);
     if (rb->err) break;
   }
   g_depth--;
-  if (nstack > 0) jnl();
+  if (nstack > 0) jsonnl();
   fputc(']', g_out);
 
   nci = rb_i32(rb);
@@ -378,7 +405,7 @@ static void dump_thread(RBuf *rb) {
     uint8_t is_lua;
     int32_t u2v;
     if (j > 0) fputc(',', g_out);
-    jnl();
+    jsonnl();
     is_lua = rb_u8(rb);
     foff = rb_i32(rb);
     toff = rb_i32(rb);
@@ -398,7 +425,7 @@ static void dump_thread(RBuf *rb) {
     if (rb->err) break;
   }
   g_depth--;
-  if (nci > 0) jnl();
+  if (nci > 0) jsonnl();
   fputc(']', g_out);
 
   nopen = rb_u32(rb);
@@ -450,6 +477,7 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
   uint64_t *objids;
   size_t *offsets;
   uint64_t next_seq;
+  uint32_t seed;
   uint32_t num_objects;
   uint32_t registry_id;
   uint32_t main_thread_id;
@@ -457,9 +485,9 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
   RBuf rb = { (const uint8_t *)buf, 0, sz, 0 };
   g_out = out;
 
-  /* Format: [next_seq:u64] {objects...} [registry:u32 main:u32
-  ** mt:u32×LUA_NUMTYPES].  Objects span byte 8 → (size - footer). */
-  header_size = 8;
+  /* Format: [next_seq:u64][seed:u32] {objects...} [registry:u32
+  ** main:u32 mt:u32×LUA_NUMTYPES]. */
+  header_size = 8 + 4;
   footer_size = (size_t)(4 + 4 + LUA_NUMTYPES * 4);
   if (rb.size < header_size + footer_size) {
     fprintf(stderr, "lstasis_tojson: buffer too small for header+footer\n");
@@ -468,6 +496,7 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
   objects_end = rb.size - footer_size;
 
   next_seq = rb_u64(&rb);
+  seed     = rb_u32(&rb);
   if (rb.err) { fprintf(stderr, "lstasis_tojson: truncated header\n"); return 1; }
 
   /* Index pass: record type code, objid, and data offset for each object.
@@ -516,6 +545,7 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
   jkey("num_objects"); fprintf(g_out, "%u,", num_objects);
   jkey("next_seq");
   fprintf(g_out, "\"0x%016" PRIx64 "\",", next_seq);
+  jkey("seed"); fprintf(g_out, "\"0x%08" PRIx32 "\",", seed);
 
   jkey("roots"); fputs("{", g_out);
   g_depth++;
@@ -528,13 +558,13 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
   }
   fputc(']', g_out);
   g_depth--;
-  jnl(); fputs("},", g_out);
+  jsonnl(); fputs("},", g_out);
 
   jkey("objects"); fputc('{', g_out);
   g_depth++;
   for (uint32_t i = 0; i < num_objects; i++) {
     if (i > 0) fputc(',', g_out);
-    jnl(); fprintf(g_out, "\"%u\": {", i + 1);
+    jsonnl(); fprintf(g_out, "\"%u\": {", i + 1);
     g_depth++;
 
     fprintf(g_out, "\"type\":\"%s\", \"objid\":\"0x%016" PRIx64 "\"",
@@ -560,13 +590,13 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
 
     g_depth--;
     if (obj_is_single_line(types[i]) && !rb.err) fputc('}', g_out);
-    else { jnl(); fputc('}', g_out); }
+    else { jsonnl(); fputc('}', g_out); }
   }
   g_depth--;
-  jnl(); fputc('}', g_out);
+  jsonnl(); fputc('}', g_out);
 
   g_depth--;
-  jnl(); fputc('}', g_out); fputc('\n', g_out);
+  jsonnl(); fputc('}', g_out); fputc('\n', g_out);
 
   free(types);
   free(objids);
