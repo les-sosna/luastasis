@@ -37,6 +37,19 @@ int main(void) {
 #include "lstasis.h"
 #include "lstasis_tojson.h"
 
+/* The checked-in goldens were generated with LUA_COMPAT_MATHLIB enabled
+** (which adds atan2/cosh/sinh/tanh/pow/log10 to the math library and is
+** turned on by ltests.h via LUA_USER_H). Building this test without that
+** flag produces snapshots with fewer objects and the comparison fails
+** in confusing ways. Fail fast at compile time instead. The CI build passes
+** TESTS='-DLUA_USER_H="\"ltests.h\"" -DLUA_USE_APICHECK -Og -g', which is
+** the configuration the goldens are pinned to. */
+#if !defined(LUA_COMPAT_MATHLIB)
+#error "test_json must be built with LUA_COMPAT_MATHLIB defined " \
+       "(typically via TESTS='-DLUA_USER_H=\"\\\"ltests.h\\\"\" ...'). " \
+       "See the comment above this #error for details."
+#endif
+
 static const lstasis_Lib std_libs[] = {
   {"base",      luaopen_base},
   {"package",   luaopen_package},

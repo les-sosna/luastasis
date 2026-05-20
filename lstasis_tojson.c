@@ -173,7 +173,7 @@ static void dump_string(RBuf *rb) {
 static void dump_table(RBuf *rb) {
   uint32_t mt;
   uint32_t acount = rb_u32(rb);
-  uint32_t hcount;
+  uint32_t hsize;
   uint32_t i;
   fprintf(g_out, ", \"array\":[");
   g_depth++;
@@ -189,15 +189,22 @@ static void dump_table(RBuf *rb) {
   if (acount > 0) jsonnl();
   fputc(']', g_out);
 
-  hcount = rb_u32(rb);
-  fprintf(g_out, ", \"hash\":[");
+  hsize = rb_u32(rb);
+  fprintf(g_out, ", \"hsize\":%u, \"hash\":[", hsize);
   g_depth++;
-  for (i = 0; i < hcount; i++) {
-    uint32_t idx;
+  for (i = 0; i < hsize; i++) {
+    size_t before;
     int32_t nxt;
     if (i > 0) fputc(',', g_out);
-    idx = rb_u32(rb);
-    jsonnl(); fprintf(g_out, "{\"idx\":%u, \"key\":", idx);
+    jsonnl();
+    before = rb->pos;
+    fprintf(g_out, "{\"idx\":%u", i);
+    if (rb->pos < rb->size && rb->data[before] == TV_NIL) {
+      rb_u8(rb);  /* consume the empty-slot marker */
+      fputs(", \"empty\":true}", g_out);
+      continue;
+    }
+    fputs(", \"key\":", g_out);
     jtv(rb);
     fputs(", \"val\":", g_out);
     jtv(rb);
@@ -206,7 +213,7 @@ static void dump_table(RBuf *rb) {
     if (rb->err) break;
   }
   g_depth--;
-  if (hcount > 0) jsonnl();
+  if (hsize > 0) jsonnl();
   fputc(']', g_out);
 
   mt = rb_u32(rb);
@@ -214,7 +221,6 @@ static void dump_table(RBuf *rb) {
   else fputs(", \"metatable\":null", g_out);
 
   fprintf(g_out, ", \"asize\":%u", rb_u32(rb));
-  fprintf(g_out, ", \"hsize\":%u", rb_u32(rb));
 }
 
 static void dump_proto(RBuf *rb) {

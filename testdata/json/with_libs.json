@@ -13,14 +13,16 @@
         {"idx":0, "val":{"bool":false}},
         {"idx":1, "val":{"ref":4}},
         {"idx":2, "val":{"ref":2}}
-      ], "hash":[
+      ], "hsize":8, "hash":[
         {"idx":0, "key":{"ref":5}, "val":{"ref":6}, "next":3},
+        {"idx":1, "empty":true},
+        {"idx":2, "empty":true},
         {"idx":3, "key":{"ref":7}, "val":null, "next":0},
         {"idx":4, "key":{"ref":8}, "val":{"ref":9}, "next":2},
         {"idx":5, "key":{"ref":10}, "val":null, "next":0},
         {"idx":6, "key":{"ref":11}, "val":{"ref":12}, "next":0},
         {"idx":7, "key":{"ref":13}, "val":{"ref":14}, "next":0}
-      ], "metatable":null, "asize":3, "hsize":8
+      ], "metatable":null, "asize":3
     },
     "2": {"type":"thread", "objid":"0x5692161d100b05e5", "status":0, "status_name":"ok", "stack_size":1, "stack":[
         null
@@ -28,42 +30,78 @@
         {"is_lua":false, "func_slot":0, "top_slot":21, "callstatus":32768}
       ], "open_upvalues":[]
     },
-    "3": {"type":"table", "objid":"0x83ca02038c6b5ebf", "array":[], "hash":[
+    "3": {"type":"table", "objid":"0x83ca02038c6b5ebf", "array":[], "hsize":16, "hash":[
         {"idx":0, "key":{"ref":15}, "val":{"ref":16}, "next":0},
         {"idx":1, "key":{"ref":17}, "val":{"ref":18}, "next":0},
+        {"idx":2, "empty":true},
+        {"idx":3, "empty":true},
+        {"idx":4, "empty":true},
+        {"idx":5, "empty":true},
         {"idx":6, "key":{"ref":19}, "val":{"ref":20}, "next":0},
+        {"idx":7, "empty":true},
         {"idx":8, "key":{"ref":21}, "val":{"ref":22}, "next":7},
         {"idx":9, "key":{"ref":23}, "val":{"ref":24}, "next":0},
+        {"idx":10, "empty":true},
         {"idx":11, "key":{"ref":25}, "val":{"ref":26}, "next":0},
+        {"idx":12, "empty":true},
         {"idx":13, "key":{"ref":27}, "val":{"ref":28}, "next":0},
         {"idx":14, "key":{"ref":29}, "val":{"ref":30}, "next":-1},
         {"idx":15, "key":{"ref":31}, "val":{"ref":32}, "next":0}
-      ], "metatable":null, "asize":0, "hsize":16
+      ], "metatable":null, "asize":0
     },
-    "4": {"type":"table", "objid":"0x1e535eede31428f0", "array":[], "hash":[
+    "4": {"type":"table", "objid":"0x1e535eede31428f0", "array":[], "hsize":64, "hash":[
+        {"idx":0, "empty":true},
         {"idx":1, "key":{"ref":33}, "val":{"ref":28}, "next":0},
         {"idx":2, "key":{"ref":34}, "val":{"ref":35}, "next":0},
         {"idx":3, "key":{"ref":36}, "val":{"ref":37}, "next":0},
         {"idx":4, "key":{"ref":38}, "val":{"ref":39}, "next":0},
         {"idx":5, "key":{"ref":40}, "val":{"ref":41}, "next":0},
         {"idx":6, "key":{"ref":42}, "val":{"ref":43}, "next":48},
+        {"idx":7, "empty":true},
+        {"idx":8, "empty":true},
+        {"idx":9, "empty":true},
         {"idx":10, "key":{"ref":44}, "val":{"ref":45}, "next":0},
         {"idx":11, "key":{"ref":46}, "val":{"ref":47}, "next":0},
+        {"idx":12, "empty":true},
+        {"idx":13, "empty":true},
         {"idx":14, "key":{"ref":48}, "val":{"ref":49}, "next":0},
+        {"idx":15, "empty":true},
+        {"idx":16, "empty":true},
+        {"idx":17, "empty":true},
         {"idx":18, "key":{"ref":50}, "val":{"ref":51}, "next":39},
         {"idx":19, "key":{"ref":52}, "val":{"ref":53}, "next":0},
+        {"idx":20, "empty":true},
         {"idx":21, "key":{"ref":54}, "val":{"ref":55}, "next":0},
         {"idx":22, "key":{"ref":56}, "val":{"ref":57}, "next":0},
         {"idx":23, "key":{"ref":58}, "val":{"ref":59}, "next":35},
+        {"idx":24, "empty":true},
         {"idx":25, "key":{"ref":60}, "val":{"ref":61}, "next":0},
         {"idx":26, "key":{"ref":62}, "val":{"ref":63}, "next":0},
+        {"idx":27, "empty":true},
         {"idx":28, "key":{"ref":64}, "val":{"ref":65}, "next":0},
+        {"idx":29, "empty":true},
         {"idx":30, "key":{"ref":66}, "val":{"ref":67}, "next":26},
+        {"idx":31, "empty":true},
+        {"idx":32, "empty":true},
+        {"idx":33, "empty":true},
         {"idx":34, "key":{"ref":68}, "val":{"ref":69}, "next":0},
+        {"idx":35, "empty":true},
+        {"idx":36, "empty":true},
         {"idx":37, "key":{"ref":70}, "val":{"ref":4}, "next":16},
+        {"idx":38, "empty":true},
+        {"idx":39, "empty":true},
+        {"idx":40, "empty":true},
+        {"idx":41, "empty":true},
+        {"idx":42, "empty":true},
+        {"idx":43, "empty":true},
         {"idx":44, "key":{"ref":71}, "val":{"ref":72}, "next":0},
+        {"idx":45, "empty":true},
         {"idx":46, "key":{"ref":73}, "val":{"ref":74}, "next":14},
+        {"idx":47, "empty":true},
+        {"idx":48, "empty":true},
         {"idx":49, "key":{"ref":75}, "val":{"ref":76}, "next":0},
+        {"idx":50, "empty":true},
+        {"idx":51, "empty":true},
         {"idx":52, "key":{"ref":77}, "val":{"ref":78}, "next":0},
         {"idx":53, "key":{"ref":79}, "val":{"ref":80}, "next":0},
         {"idx":54, "key":{"ref":81}, "val":{"ref":82}, "next":0},
@@ -76,38 +114,51 @@
         {"idx":61, "key":{"ref":95}, "val":{"ref":96}, "next":0},
         {"idx":62, "key":{"ref":97}, "val":{"ref":98}, "next":0},
         {"idx":63, "key":{"ref":99}, "val":{"ref":100}, "next":0}
-      ], "metatable":null, "asize":0, "hsize":64
+      ], "metatable":null, "asize":0
     },
     "5": {"type":"string", "objid":"0x2d16ae81745323fe", "length":5, "value":"FILE*"},
-    "6": {"type":"table", "objid":"0x718a70510ebe1268", "array":[], "hash":[
+    "6": {"type":"table", "objid":"0x718a70510ebe1268", "array":[], "hsize":8, "hash":[
         {"idx":0, "key":{"ref":101}, "val":{"ref":5}, "next":7},
+        {"idx":1, "empty":true},
+        {"idx":2, "empty":true},
+        {"idx":3, "empty":true},
         {"idx":4, "key":{"ref":102}, "val":{"ref":103}, "next":1},
         {"idx":5, "key":{"ref":104}, "val":{"ref":105}, "next":0},
         {"idx":6, "key":{"ref":27}, "val":{"ref":106}, "next":-2},
         {"idx":7, "key":{"ref":107}, "val":{"ref":105}, "next":0}
-      ], "metatable":null, "asize":0, "hsize":8
+      ], "metatable":null, "asize":0
     },
     "7": {"type":"string", "objid":"0x394836aab36daa5d", "length":9, "value":"_IO_input"},
     "8": {"type":"string", "objid":"0xf95d76a430c5bb5c", "length":8, "value":"_PRELOAD"},
-    "9": {"type":"table", "objid":"0x9abd6df5738c0a9b", "array":[], "hash":[], "metatable":null, "asize":0, "hsize":1
+    "9": {"type":"table", "objid":"0x9abd6df5738c0a9b", "array":[], "hsize":1, "hash":[
+        {"idx":0, "empty":true}
+      ], "metatable":null, "asize":0
     },
     "10": {"type":"string", "objid":"0x8ab963f7da9e8c75", "length":10, "value":"_IO_output"},
     "11": {"type":"string", "objid":"0x58efd731a91fb004", "length":7, "value":"_LOADED"},
-    "12": {"type":"table", "objid":"0x6231eab2525ba011", "array":[], "hash":[
+    "12": {"type":"table", "objid":"0x6231eab2525ba011", "array":[], "hsize":16, "hash":[
+        {"idx":0, "empty":true},
         {"idx":1, "key":{"ref":33}, "val":{"ref":28}, "next":0},
         {"idx":2, "key":{"ref":50}, "val":{"ref":51}, "next":13},
+        {"idx":3, "empty":true},
         {"idx":4, "key":{"ref":38}, "val":{"ref":39}, "next":0},
         {"idx":5, "key":{"ref":70}, "val":{"ref":4}, "next":0},
+        {"idx":6, "empty":true},
+        {"idx":7, "empty":true},
+        {"idx":8, "empty":true},
         {"idx":9, "key":{"ref":60}, "val":{"ref":61}, "next":0},
         {"idx":10, "key":{"ref":44}, "val":{"ref":45}, "next":0},
         {"idx":11, "key":{"ref":46}, "val":{"ref":47}, "next":0},
         {"idx":12, "key":{"ref":71}, "val":{"ref":72}, "next":0},
+        {"idx":13, "empty":true},
         {"idx":14, "key":{"ref":73}, "val":{"ref":74}, "next":0},
         {"idx":15, "key":{"ref":68}, "val":{"ref":69}, "next":0}
-      ], "metatable":null, "asize":0, "hsize":16
+      ], "metatable":null, "asize":0
     },
     "13": {"type":"string", "objid":"0x581d666dc9c63f77", "length":6, "value":"_CLIBS"},
-    "14": {"type":"table", "objid":"0x1801ebc20183eb48", "array":[], "hash":[], "metatable":null, "asize":0, "hsize":1
+    "14": {"type":"table", "objid":"0x1801ebc20183eb48", "array":[], "hsize":1, "hash":[
+        {"idx":0, "empty":true}
+      ], "metatable":null, "asize":0
     },
     "15": {"type":"string", "objid":"0x255c6046f62fbe29", "length":5, "value":"__mod"},
     "16": {"type":"cclosure", "objid":"0x7397fd28cf25c27b", "func":"_string_meta.__mod", "upvalues":[]
@@ -128,16 +179,31 @@
     "26": {"type":"cclosure", "objid":"0x948c701e9d9abc80", "func":"_string_meta.__pow", "upvalues":[]
     },
     "27": {"type":"string", "objid":"0xb6bf613dbebb45dc", "length":7, "value":"__index"},
-    "28": {"type":"table", "objid":"0x9a77ecc3d9a97792", "array":[], "hash":[
+    "28": {"type":"table", "objid":"0x9a77ecc3d9a97792", "array":[], "hsize":32, "hash":[
+        {"idx":0, "empty":true},
+        {"idx":1, "empty":true},
+        {"idx":2, "empty":true},
+        {"idx":3, "empty":true},
+        {"idx":4, "empty":true},
+        {"idx":5, "empty":true},
+        {"idx":6, "empty":true},
         {"idx":7, "key":{"ref":108}, "val":{"ref":109}, "next":0},
         {"idx":8, "key":{"ref":110}, "val":{"ref":111}, "next":0},
+        {"idx":9, "empty":true},
+        {"idx":10, "empty":true},
         {"idx":11, "key":{"ref":112}, "val":{"ref":113}, "next":18},
         {"idx":12, "key":{"ref":114}, "val":{"ref":115}, "next":0},
         {"idx":13, "key":{"ref":116}, "val":{"ref":117}, "next":0},
+        {"idx":14, "empty":true},
         {"idx":15, "key":{"ref":118}, "val":{"ref":119}, "next":0},
         {"idx":16, "key":{"ref":120}, "val":{"ref":121}, "next":0},
         {"idx":17, "key":{"ref":122}, "val":{"ref":123}, "next":0},
+        {"idx":18, "empty":true},
+        {"idx":19, "empty":true},
+        {"idx":20, "empty":true},
+        {"idx":21, "empty":true},
         {"idx":22, "key":{"ref":124}, "val":{"ref":125}, "next":8},
+        {"idx":23, "empty":true},
         {"idx":24, "key":{"ref":126}, "val":{"ref":127}, "next":0},
         {"idx":25, "key":{"ref":128}, "val":{"ref":129}, "next":0},
         {"idx":26, "key":{"ref":130}, "val":{"ref":131}, "next":0},
@@ -146,7 +212,7 @@
         {"idx":29, "key":{"ref":136}, "val":{"ref":137}, "next":0},
         {"idx":30, "key":{"ref":138}, "val":{"ref":139}, "next":0},
         {"idx":31, "key":{"ref":140}, "val":{"ref":141}, "next":0}
-      ], "metatable":null, "asize":0, "hsize":32
+      ], "metatable":null, "asize":0
     },
     "29": {"type":"string", "objid":"0x37be58e8d7213bbc", "length":5, "value":"__sub"},
     "30": {"type":"cclosure", "objid":"0x31483dcaed431708", "func":"_string_meta.__sub", "upvalues":[]
@@ -162,7 +228,7 @@
     "37": {"type":"cclosure", "objid":"0x8505be27def25da7", "func":"base.warn", "upvalues":[]
     },
     "38": {"type":"string", "objid":"0x30af74b32e05f342", "length":7, "value":"package"},
-    "39": {"type":"table", "objid":"0xe2d92833383b377e", "array":[], "hash":[
+    "39": {"type":"table", "objid":"0xe2d92833383b377e", "array":[], "hsize":8, "hash":[
         {"idx":0, "key":{"ref":142}, "val":{"ref":9}, "next":0},
         {"idx":1, "key":{"ref":143}, "val":{"ref":144}, "next":2},
         {"idx":2, "key":{"ref":145}, "val":{"ref":146}, "next":0},
@@ -171,7 +237,7 @@
         {"idx":5, "key":{"ref":151}, "val":{"ref":12}, "next":0},
         {"idx":6, "key":{"ref":152}, "val":{"ref":153}, "next":0},
         {"idx":7, "key":{"ref":154}, "val":{"ref":155}, "next":0}
-      ], "metatable":null, "asize":0, "hsize":8
+      ], "metatable":null, "asize":0
     },
     "40": {"type":"string", "objid":"0x973d7f79fc81e7f3", "length":8, "value":"tostring"},
     "41": {"type":"cclosure", "objid":"0xa7d485d747130317", "func":"base._G.tostring", "upvalues":[]
@@ -180,22 +246,27 @@
     "43": {"type":"cclosure", "objid":"0x45f79258e41b3ae0", "func":"base.print", "upvalues":[]
     },
     "44": {"type":"string", "objid":"0xcdbb2128efaa5246", "length":2, "value":"os"},
-    "45": {"type":"table", "objid":"0x3d8dcc89e10d9980", "array":[], "hash":[
+    "45": {"type":"table", "objid":"0x3d8dcc89e10d9980", "array":[], "hsize":16, "hash":[
         {"idx":0, "key":{"ref":156}, "val":{"ref":157}, "next":0},
+        {"idx":1, "empty":true},
+        {"idx":2, "empty":true},
         {"idx":3, "key":{"ref":158}, "val":{"ref":159}, "next":0},
         {"idx":4, "key":{"ref":160}, "val":{"ref":161}, "next":11},
+        {"idx":5, "empty":true},
         {"idx":6, "key":{"ref":162}, "val":{"ref":163}, "next":7},
+        {"idx":7, "empty":true},
         {"idx":8, "key":{"ref":164}, "val":{"ref":165}, "next":0},
         {"idx":9, "key":{"ref":166}, "val":{"ref":167}, "next":0},
         {"idx":10, "key":{"ref":168}, "val":{"ref":169}, "next":0},
+        {"idx":11, "empty":true},
         {"idx":12, "key":{"ref":170}, "val":{"ref":171}, "next":0},
         {"idx":13, "key":{"ref":172}, "val":{"ref":173}, "next":0},
         {"idx":14, "key":{"ref":174}, "val":{"ref":175}, "next":0},
         {"idx":15, "key":{"ref":176}, "val":{"ref":177}, "next":0}
-      ], "metatable":null, "asize":0, "hsize":16
+      ], "metatable":null, "asize":0
     },
     "46": {"type":"string", "objid":"0x37ec2b29c413a393", "length":5, "value":"table"},
-    "47": {"type":"table", "objid":"0xebbf25daf42e5764", "array":[], "hash":[
+    "47": {"type":"table", "objid":"0xebbf25daf42e5764", "array":[], "hsize":8, "hash":[
         {"idx":0, "key":{"ref":178}, "val":{"ref":179}, "next":4},
         {"idx":1, "key":{"ref":122}, "val":{"ref":180}, "next":4},
         {"idx":2, "key":{"ref":181}, "val":{"ref":182}, "next":-2},
@@ -204,7 +275,7 @@
         {"idx":5, "key":{"ref":166}, "val":{"ref":187}, "next":0},
         {"idx":6, "key":{"ref":188}, "val":{"ref":189}, "next":0},
         {"idx":7, "key":{"ref":136}, "val":{"ref":190}, "next":0}
-      ], "metatable":null, "asize":0, "hsize":8
+      ], "metatable":null, "asize":0
     },
     "48": {"type":"string", "objid":"0x02dff2f79f398377", "length":7, "value":"require"},
     "49": {"type":"cclosure", "objid":"0xdda64e04828f136d", "func":"base.require", "upvalues":[
@@ -212,7 +283,7 @@
       ]
     },
     "50": {"type":"string", "objid":"0x94644999900a2d35", "length":5, "value":"debug"},
-    "51": {"type":"table", "objid":"0x9197ec3995324e47", "array":[], "hash":[
+    "51": {"type":"table", "objid":"0x9197ec3995324e47", "array":[], "hsize":16, "hash":[
         {"idx":0, "key":{"ref":191}, "val":{"ref":192}, "next":0},
         {"idx":1, "key":{"ref":193}, "val":{"ref":194}, "next":2},
         {"idx":2, "key":{"ref":50}, "val":{"ref":195}, "next":2},
@@ -229,7 +300,7 @@
         {"idx":13, "key":{"ref":214}, "val":{"ref":215}, "next":0},
         {"idx":14, "key":{"ref":216}, "val":{"ref":217}, "next":-13},
         {"idx":15, "key":{"ref":218}, "val":{"ref":219}, "next":0}
-      ], "metatable":null, "asize":0, "hsize":16
+      ], "metatable":null, "asize":0
     },
     "52": {"type":"string", "objid":"0xe309713ce13e0797", "length":4, "value":"next"},
     "53": {"type":"cclosure", "objid":"0x2cfa56b4a2af9298", "func":"base._G.next", "upvalues":[]
@@ -244,10 +315,12 @@
     "59": {"type":"cclosure", "objid":"0x79ce5dc97509c089", "func":"base._G.tonumber", "upvalues":[]
     },
     "60": {"type":"string", "objid":"0x68e4f6e4042c1729", "length":2, "value":"io"},
-    "61": {"type":"table", "objid":"0xa267f1c5990f7dbc", "array":[], "hash":[
+    "61": {"type":"table", "objid":"0xa267f1c5990f7dbc", "array":[], "hsize":16, "hash":[
+        {"idx":0, "empty":true},
         {"idx":1, "key":{"ref":220}, "val":{"ref":221}, "next":7},
         {"idx":2, "key":{"ref":222}, "val":{"ref":223}, "next":0},
         {"idx":3, "key":{"ref":224}, "val":{"ref":225}, "next":0},
+        {"idx":4, "empty":true},
         {"idx":5, "key":{"ref":226}, "val":{"ref":227}, "next":0},
         {"idx":6, "key":{"ref":228}, "val":{"ref":229}, "next":5},
         {"idx":7, "key":{"ref":230}, "val":{"ref":231}, "next":0},
@@ -259,7 +332,7 @@
         {"idx":13, "key":{"ref":239}, "val":null, "next":0},
         {"idx":14, "key":{"ref":240}, "val":{"ref":241}, "next":0},
         {"idx":15, "key":{"ref":242}, "val":{"ref":243}, "next":0}
-      ], "metatable":null, "asize":0, "hsize":16
+      ], "metatable":null, "asize":0
     },
     "62": {"type":"string", "objid":"0x2505f58c05e6526f", "length":8, "value":"rawequal"},
     "63": {"type":"cclosure", "objid":"0xcf15a836b33fd539", "func":"base._G.rawequal", "upvalues":[]
@@ -271,24 +344,36 @@
     "67": {"type":"cclosure", "objid":"0xcfca9d2880b2128d", "func":"base._G.load", "upvalues":[]
     },
     "68": {"type":"string", "objid":"0x84b70c9f4a513957", "length":4, "value":"utf8"},
-    "69": {"type":"table", "objid":"0xde03443269cfa85e", "array":[], "hash":[
+    "69": {"type":"table", "objid":"0xde03443269cfa85e", "array":[], "hsize":8, "hash":[
         {"idx":0, "key":{"ref":244}, "val":{"ref":245}, "next":5},
+        {"idx":1, "empty":true},
+        {"idx":2, "empty":true},
         {"idx":3, "key":{"ref":246}, "val":{"ref":247}, "next":0},
         {"idx":4, "key":{"ref":248}, "val":{"ref":249}, "next":2},
         {"idx":5, "key":{"ref":250}, "val":{"ref":251}, "next":2},
         {"idx":6, "key":{"ref":140}, "val":{"ref":252}, "next":0},
         {"idx":7, "key":{"ref":126}, "val":{"ref":253}, "next":0}
-      ], "metatable":null, "asize":0, "hsize":8
+      ], "metatable":null, "asize":0
     },
     "70": {"type":"string", "objid":"0x99e7fe09b67a7978", "length":2, "value":"_G"},
     "71": {"type":"string", "objid":"0x72e195f23a2bfe78", "length":4, "value":"math"},
-    "72": {"type":"table", "objid":"0x2f626659b2d8087b", "array":[], "hash":[
+    "72": {"type":"table", "objid":"0x2f626659b2d8087b", "array":[], "hsize":64, "hash":[
+        {"idx":0, "empty":true},
         {"idx":1, "key":{"ref":254}, "val":{"ref":255}, "next":0},
+        {"idx":2, "empty":true},
         {"idx":3, "key":{"ref":256}, "val":{"ref":257}, "next":0},
+        {"idx":4, "empty":true},
         {"idx":5, "key":{"ref":258}, "val":{"ref":259}, "next":0},
+        {"idx":6, "empty":true},
+        {"idx":7, "empty":true},
+        {"idx":8, "empty":true},
+        {"idx":9, "empty":true},
         {"idx":10, "key":{"ref":260}, "val":{"ref":261}, "next":51},
+        {"idx":11, "empty":true},
         {"idx":12, "key":{"ref":262}, "val":{"ref":263}, "next":0},
+        {"idx":13, "empty":true},
         {"idx":14, "key":{"ref":264}, "val":{"ref":265}, "next":0},
+        {"idx":15, "empty":true},
         {"idx":16, "key":{"ref":266}, "val":{"ref":267}, "next":34},
         {"idx":17, "key":{"ref":268}, "val":{"ref":269}, "next":31},
         {"idx":18, "key":{"ref":270}, "val":{"ref":271}, "next":0},
@@ -297,10 +382,29 @@
         {"idx":21, "key":{"ref":275}, "val":{"ref":276}, "next":0},
         {"idx":22, "key":{"ref":277}, "val":{"ref":278}, "next":0},
         {"idx":23, "key":{"ref":279}, "val":{"float":"+Inf"}, "next":0},
+        {"idx":24, "empty":true},
+        {"idx":25, "empty":true},
+        {"idx":26, "empty":true},
+        {"idx":27, "empty":true},
         {"idx":28, "key":{"ref":280}, "val":{"ref":281}, "next":25},
+        {"idx":29, "empty":true},
+        {"idx":30, "empty":true},
+        {"idx":31, "empty":true},
+        {"idx":32, "empty":true},
+        {"idx":33, "empty":true},
+        {"idx":34, "empty":true},
         {"idx":35, "key":{"ref":282}, "val":{"ref":283}, "next":22},
+        {"idx":36, "empty":true},
+        {"idx":37, "empty":true},
+        {"idx":38, "empty":true},
+        {"idx":39, "empty":true},
+        {"idx":40, "empty":true},
+        {"idx":41, "empty":true},
+        {"idx":42, "empty":true},
         {"idx":43, "key":{"ref":284}, "val":{"ref":285}, "next":0},
         {"idx":44, "key":{"ref":286}, "val":{"ref":287}, "next":0},
+        {"idx":45, "empty":true},
+        {"idx":46, "empty":true},
         {"idx":47, "key":{"ref":288}, "val":{"int":9223372036854775807}, "next":0},
         {"idx":48, "key":{"ref":289}, "val":{"float":3.1415926535897931}, "next":0},
         {"idx":49, "key":{"ref":290}, "val":{"ref":291}, "next":2},
@@ -318,10 +422,10 @@
         {"idx":61, "key":{"ref":313}, "val":{"ref":314}, "next":0},
         {"idx":62, "key":{"ref":315}, "val":{"ref":316}, "next":0},
         {"idx":63, "key":{"ref":317}, "val":{"ref":312}, "next":0}
-      ], "metatable":null, "asize":0, "hsize":64
+      ], "metatable":null, "asize":0
     },
     "73": {"type":"string", "objid":"0x3e784199b71ea792", "length":9, "value":"coroutine"},
-    "74": {"type":"table", "objid":"0x1d08970c8bcea7c1", "array":[], "hash":[
+    "74": {"type":"table", "objid":"0x1d08970c8bcea7c1", "array":[], "hsize":8, "hash":[
         {"idx":0, "key":{"ref":318}, "val":{"ref":319}, "next":0},
         {"idx":1, "key":{"ref":320}, "val":{"ref":321}, "next":-1},
         {"idx":2, "key":{"ref":322}, "val":{"ref":323}, "next":0},
@@ -330,7 +434,7 @@
         {"idx":5, "key":{"ref":327}, "val":{"ref":328}, "next":0},
         {"idx":6, "key":{"ref":188}, "val":{"ref":329}, "next":0},
         {"idx":7, "key":{"ref":330}, "val":{"ref":331}, "next":0}
-      ], "metatable":null, "asize":0, "hsize":8
+      ], "metatable":null, "asize":0
     },
     "75": {"type":"string", "objid":"0xfadb7bdc13722e8e", "length":4, "value":"type"},
     "76": {"type":"cclosure", "objid":"0x51b6e610eb969d89", "func":"base._G.type", "upvalues":[]
@@ -377,15 +481,16 @@
     "104": {"type":"string", "objid":"0x12ae30237b17df14", "length":4, "value":"__gc"},
     "105": {"type":"cclosure", "objid":"0xfe501eb5baddad2c", "func":"_registry.FILE*.__gc", "upvalues":[]
     },
-    "106": {"type":"table", "objid":"0x7f539d37f75a6232", "array":[], "hash":[
+    "106": {"type":"table", "objid":"0x7f539d37f75a6232", "array":[], "hsize":8, "hash":[
         {"idx":0, "key":{"ref":332}, "val":{"ref":333}, "next":0},
         {"idx":1, "key":{"ref":233}, "val":{"ref":334}, "next":6},
         {"idx":2, "key":{"ref":222}, "val":{"ref":335}, "next":0},
         {"idx":3, "key":{"ref":224}, "val":{"ref":336}, "next":0},
+        {"idx":4, "empty":true},
         {"idx":5, "key":{"ref":226}, "val":{"ref":337}, "next":1},
         {"idx":6, "key":{"ref":338}, "val":{"ref":339}, "next":0},
         {"idx":7, "key":{"ref":220}, "val":{"ref":340}, "next":0}
-      ], "metatable":null, "asize":0, "hsize":8
+      ], "metatable":null, "asize":0
     },
     "107": {"type":"string", "objid":"0x4f7abb7627b74f52", "length":7, "value":"__close"},
     "108": {"type":"string", "objid":"0x3bf153fdf05523a8", "length":5, "value":"match"},
@@ -449,7 +554,9 @@
         {"idx":1, "val":{"ref":342}},
         {"idx":2, "val":{"ref":343}},
         {"idx":3, "val":{"ref":344}}
-      ], "hash":[], "metatable":null, "asize":4, "hsize":1
+      ], "hsize":1, "hash":[
+        {"idx":0, "empty":true}
+      ], "metatable":null, "asize":4
     },
     "147": {"type":"string", "objid":"0x629be6c3eec6e119", "length":6, "value":"config"},
     "148": {"type":"string", "objid":"0x9e94f67a91a8b89f", "length":10, "value":"/\n;\n?\n!\n-\n"},
