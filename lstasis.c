@@ -1183,12 +1183,7 @@ static void fill_table(DeserState *d, Table *t) {
   /* Hash entries: place each one at its saved node slot, preserving the
   ** exact layout the source state had. We bypass luaH_set entirely —
   ** that would re-run the insertion algorithm and likely route entries
-  ** to different slots than where they came from.
-  **
-  ** Note: copy value via setobj (field-by-field), NOT via `n->i_val = val`.
-  ** TValue is 16 bytes due to alignment padding, but a Node's key_tt
-  ** sits at offset 9, inside that padding; a whole-struct assignment to
-  ** i_val therefore clobbers key_tt and breaks the key we just set. */
+  ** to different slots than where they came from. */
   for (e = 0; e < hcount; e++) {
     uint32_t idx = rb_u32(rb);
     TValue key   = ds_read_tv(d);
@@ -1196,15 +1191,9 @@ static void fill_table(DeserState *d, Table *t) {
     int32_t nxt  = rb_i32(rb);
     if (idx < sizenode(t)) {
       Node *n = gnode(t, idx);
-      /* Write through the same NodeKey union member that Lua's table code
-      ** uses internally; mixing access via n->i_val and n->u confuses the
-      ** compiler under -O2 (strict aliasing) and breaks the state in
-      ** subtle ways that only surface later. */
-      n->u.key_val = key.value_;
-      n->u.key_tt  = key.tt_;
-      n->u.value_  = val.value_;
-      n->u.tt_     = val.tt_;
-      n->u.next    = nxt;
+      setnodekey(n, &key);
+      setobj2t(d->L, gval(n), &val);
+      gnext(n) = nxt;
     }
   }
   mt_id = rb_u32(rb);
