@@ -403,14 +403,12 @@ static void dump_thread(RBuf *rb) {
     int32_t toff;
     int32_t foff;
     uint8_t is_lua;
-    int32_t u2v;
     if (j > 0) fputc(',', g_out);
     jsonnl();
     is_lua = rb_u8(rb);
     foff = rb_i32(rb);
     toff = rb_i32(rb);
     cstat = rb_u32(rb);
-    u2v = rb_i32(rb); (void)u2v;
     fprintf(g_out, "{\"is_lua\":%s, \"func_slot\":%d, \"top_slot\":%d, \"callstatus\":%u",
            is_lua ? "true" : "false", foff, toff, cstat);
     if (is_lua) {

@@ -295,6 +295,7 @@ void luaC_fix (lua_State *L, GCObject *o) {
 ** and link it to 'allgc' list.
 */
 #if LUASTASIS_DETERMINISTIC
+#include <stdint.h>
 /*
 ** LuaStasis: bijective mix from (sequence number, seed) to a 64-bit
 ** identifier.  splitmix64 finalizer — every step is invertible, so

@@ -828,7 +828,14 @@ static void wobj_thread(WBuf *b, SerState *s, lua_State *th) {
     wb_i32(b, foff);
     wb_i32(b, toff);
     wb_u32(b, ci->callstatus);
-    wb_i32(b, ci->u2.funcidx);
+    /* 'u2' (funcidx/nyield/nres) is a transient union Lua only touches while
+    ** an actual call/yield/return is in progress — never at a GC-safe point
+    ** like this, where it holds stale/uninitialized bytes (the base_ci never
+    ** sets it at all). It carries no state that survives to the next resume,
+    ** so it is deliberately not serialized: writing the live value would make
+    ** the output depend on uninitialized memory and diverge between two
+    ** independently built states. The loader leaves the restored ci->u2 at
+    ** its default, exactly as a fresh state would. */
     if (isLua(ci)) {
       TValue *fv = s2v(ci->func.p);
       uint32_t proto_id = ID_NULL;
@@ -1275,7 +1282,6 @@ static void fill_thread(DeserState *d, lua_State *th, int is_main) {
     int32_t foff    = rb_i32(rb);
     int32_t toff    = rb_i32(rb);
     uint32_t cstat  = rb_u32(rb);
-    int32_t u2v     = rb_i32(rb);
     uint32_t pid    = ID_NULL;
     int32_t pc_off  = 0;
     int32_t nextra  = 0;
@@ -1288,7 +1294,8 @@ static void fill_thread(DeserState *d, lua_State *th, int is_main) {
     cur->func.p     = th->stack.p + foff;
     cur->top.p      = th->stack.p + toff;
     cur->callstatus = (l_uint32)cstat;
-    cur->u2.funcidx = u2v;
+    /* ci->u2 is intentionally not restored — see wobj_thread; it is transient
+    ** state that is re-established before any read, just like a fresh state. */
 
     if (is_lua) {
       Proto *proto = pid ? (Proto *)d->id_to_ptr[pid] : NULL;
