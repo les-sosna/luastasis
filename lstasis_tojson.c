@@ -403,14 +403,16 @@ static void dump_thread(RBuf *rb) {
     int32_t toff;
     int32_t foff;
     uint8_t is_lua;
+    int32_t u2v;
     if (j > 0) fputc(',', g_out);
     jsonnl();
     is_lua = rb_u8(rb);
     foff = rb_i32(rb);
     toff = rb_i32(rb);
     cstat = rb_u32(rb);
-    fprintf(g_out, "{\"is_lua\":%s, \"func_slot\":%d, \"top_slot\":%d, \"callstatus\":%u",
-           is_lua ? "true" : "false", foff, toff, cstat);
+    u2v = rb_i32(rb);
+    fprintf(g_out, "{\"is_lua\":%s, \"func_slot\":%d, \"top_slot\":%d, \"callstatus\":%u, \"u2\":%d",
+           is_lua ? "true" : "false", foff, toff, cstat, u2v);
     if (is_lua) {
       uint32_t pid    = rb_u32(rb);
       int32_t  pcoff  = rb_i32(rb);
@@ -418,6 +420,22 @@ static void dump_thread(RBuf *rb) {
       fputs(", \"proto\":", g_out);
       if (pid) fprintf(g_out, "%u", pid); else fputs("null", g_out);
       fprintf(g_out, ", \"pc_offset\":%d, \"nextra\":%d", pcoff, nextra);
+    } else {
+      uint8_t has_kont = rb_u8(rb);
+      if (has_kont) {
+        uint16_t knlen = rb_u16(rb);
+        const char *kname = (const char *)(rb->data + rb->pos);
+        int64_t ctx, errf;
+        if (rb->pos + knlen > rb->size) { rb->err = 1; break; }
+        rb->pos += knlen;
+        ctx  = (int64_t)rb_u64(rb);
+        errf = (int64_t)rb_u64(rb);
+        fputs(", \"continuation\":", g_out);
+        jstr_bytes((const uint8_t *)kname, knlen);
+        fprintf(g_out, ", \"ctx\":%" PRId64 ", \"old_errfunc\":%" PRId64, ctx, errf);
+      } else {
+        fputs(", \"continuation\":null", g_out);
+      }
     }
     fputc('}', g_out);
     if (rb->err) break;

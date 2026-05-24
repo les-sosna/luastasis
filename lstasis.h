@@ -27,6 +27,23 @@ typedef struct {
 } lstasis_Lib;
 
 /*
+** A built-in continuation (lua_KFunction) that lstasis recognizes. A C call
+** frame suspended in one of these — e.g. a coroutine that yielded across
+** pcall — can be serialized and restored, because the continuation pointer is
+** identified by 'name' rather than by its (non-portable) address. A
+** continuation that is not built in (e.g. one passed to lua_pcallk by user C
+** code) cannot be reconstructed and is rejected at save time.
+** lstasis_builtin_konts() returns a {NULL,NULL}-terminated table; it lives in
+** lbaselib.c, where the continuation functions are visible.
+*/
+typedef struct {
+  const char    *name;
+  lua_KFunction  k;
+} lstasis_Kont;
+
+const lstasis_Kont *lstasis_builtin_konts(void);
+
+/*
 ** Serialize the full state of L into a freshly malloc'd byte buffer.
 ** libs: NULL-or-{NULL,NULL}-terminated list of library openers used to
 **       resolve C functions.  Unknown C functions are a hard error.

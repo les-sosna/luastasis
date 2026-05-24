@@ -20,7 +20,7 @@
     "2": {"type":"thread", "objid":"0x5692161d100b05e5", "status":0, "status_name":"ok", "stack_size":1, "stack":[
         null
       ], "num_callinfos":1, "callinfos":[
-        {"is_lua":false, "func_slot":0, "top_slot":21, "callstatus":32768}
+        {"is_lua":false, "func_slot":0, "top_slot":21, "callstatus":32768, "u2":0, "continuation":null}
       ], "open_upvalues":[]
     },
     "3": {"type":"table", "objid":"0x1e535eede31428f0", "array":[], "hsize":1, "hash":[

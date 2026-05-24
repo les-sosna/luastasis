@@ -20,6 +20,7 @@
 #include "lauxlib.h"
 #include "lualib.h"
 #include "llimits.h"
+#include "lstasis.h"
 
 
 static int luaB_print (lua_State *L) {
@@ -548,5 +549,22 @@ LUAMOD_API int luaopen_base (lua_State *L) {
   lua_pushliteral(L, LUA_VERSION);
   lua_setfield(L, -2, "_VERSION");
   return 1;
+}
+
+
+/*
+** The yieldable continuations used by this library. lstasis serializes a C
+** call frame suspended in one of these by 'name', so a coroutine that yielded
+** across e.g. pcall can be saved and resumed. Keep names stable: they are the
+** on-wire identity of the continuation.
+*/
+const lstasis_Kont *lstasis_builtin_konts (void) {
+  static const lstasis_Kont konts[] = {
+    {"base.finishpcall", finishpcall},   /* pcall / xpcall */
+    {"base.pairscont",   pairscont},     /* pairs (__pairs metamethod call) */
+    {"base.dofilecont",  dofilecont},    /* dofile */
+    {NULL, NULL}
+  };
+  return konts;
 }
 

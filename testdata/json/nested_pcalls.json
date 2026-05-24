@@ -1,0 +1,216 @@
+{
+  "format": "lstasis",
+  "num_objects": 84,
+  "next_seq": "0x000000000000008f",
+  "seed": "0x00000000",
+  "roots": {
+    "registry": 1,
+    "main_thread": 2,
+    "type_metatables": [null,null,null,null,null,null,null,null,null]
+  },
+  "objects": {
+    "1": {"type":"table", "objid":"0xdbd238973a2b148a", "array":[
+        {"idx":0, "val":{"bool":false}},
+        {"idx":1, "val":{"ref":3}},
+        {"idx":2, "val":{"ref":2}}
+      ], "hsize":1, "hash":[
+        {"idx":0, "key":{"ref":4}, "val":{"ref":5}, "next":0}
+      ], "metatable":null, "asize":3
+    },
+    "2": {"type":"thread", "objid":"0x5692161d100b05e5", "status":0, "status_name":"ok", "stack_size":1, "stack":[
+        null
+      ], "num_callinfos":1, "callinfos":[
+        {"is_lua":false, "func_slot":0, "top_slot":21, "callstatus":32768, "u2":0, "continuation":null}
+      ], "open_upvalues":[]
+    },
+    "3": {"type":"table", "objid":"0x1e535eede31428f0", "array":[], "hsize":32, "hash":[
+        {"idx":0, "empty":true},
+        {"idx":1, "empty":true},
+        {"idx":2, "key":{"ref":6}, "val":{"ref":7}, "next":0},
+        {"idx":3, "key":{"ref":8}, "val":{"ref":9}, "next":6},
+        {"idx":4, "empty":true},
+        {"idx":5, "key":{"ref":10}, "val":{"ref":11}, "next":7},
+        {"idx":6, "key":{"ref":12}, "val":{"ref":13}, "next":5},
+        {"idx":7, "empty":true},
+        {"idx":8, "empty":true},
+        {"idx":9, "key":{"ref":14}, "val":{"ref":15}, "next":0},
+        {"idx":10, "key":{"ref":16}, "val":{"ref":17}, "next":0},
+        {"idx":11, "key":{"ref":18}, "val":{"ref":19}, "next":0},
+        {"idx":12, "key":{"ref":20}, "val":{"ref":3}, "next":3},
+        {"idx":13, "key":{"ref":21}, "val":{"ref":22}, "next":0},
+        {"idx":14, "key":{"ref":23}, "val":{"ref":24}, "next":-4},
+        {"idx":15, "key":{"ref":25}, "val":{"ref":26}, "next":0},
+        {"idx":16, "key":{"ref":27}, "val":{"ref":28}, "next":8},
+        {"idx":17, "key":{"ref":29}, "val":{"ref":30}, "next":0},
+        {"idx":18, "key":{"ref":31}, "val":{"ref":32}, "next":-5},
+        {"idx":19, "key":{"ref":33}, "val":{"ref":34}, "next":0},
+        {"idx":20, "key":{"ref":35}, "val":{"ref":36}, "next":0},
+        {"idx":21, "key":{"ref":37}, "val":{"ref":38}, "next":0},
+        {"idx":22, "key":{"ref":39}, "val":{"ref":40}, "next":0},
+        {"idx":23, "key":{"ref":41}, "val":{"ref":42}, "next":-7},
+        {"idx":24, "key":{"ref":43}, "val":{"ref":44}, "next":0},
+        {"idx":25, "key":{"ref":45}, "val":{"ref":46}, "next":4},
+        {"idx":26, "key":{"ref":47}, "val":{"ref":48}, "next":0},
+        {"idx":27, "key":{"ref":49}, "val":{"ref":50}, "next":0},
+        {"idx":28, "key":{"ref":51}, "val":{"ref":52}, "next":0},
+        {"idx":29, "key":{"ref":53}, "val":{"ref":54}, "next":0},
+        {"idx":30, "key":{"ref":55}, "val":{"ref":56}, "next":-5},
+        {"idx":31, "key":{"ref":57}, "val":{"ref":58}, "next":0}
+      ], "metatable":null, "asize":0
+    },
+    "4": {"type":"string", "objid":"0xf95d76a430c5bb5c", "length":7, "value":"_LOADED"},
+    "5": {"type":"table", "objid":"0x9abd6df5738c0a9b", "array":[], "hsize":2, "hash":[
+        {"idx":0, "key":{"ref":16}, "val":{"ref":17}, "next":0},
+        {"idx":1, "key":{"ref":20}, "val":{"ref":3}, "next":0}
+      ], "metatable":null, "asize":0
+    },
+    "6": {"type":"string", "objid":"0xfadb7bdc13722e8e", "length":6, "value":"xpcall"},
+    "7": {"type":"cclosure", "objid":"0x51b6e610eb969d89", "func":"base.xpcall", "upvalues":[]
+    },
+    "8": {"type":"string", "objid":"0xe3841e098fbc6ad9", "length":4, "value":"warn"},
+    "9": {"type":"cclosure", "objid":"0x45f79258e41b3ae0", "func":"base.warn", "upvalues":[]
+    },
+    "10": {"type":"string", "objid":"0xde295d82f964f296", "length":6, "value":"rawset"},
+    "11": {"type":"cclosure", "objid":"0x968a5ba23473faff", "func":"base.rawset", "upvalues":[]
+    },
+    "12": {"type":"string", "objid":"0x33c617428bbaa70b", "length":5, "value":"print"},
+    "13": {"type":"cclosure", "objid":"0x8b37e5e0a757936c", "func":"base.print", "upvalues":[]
+    },
+    "14": {"type":"string", "objid":"0xe2e7890052504d85", "length":2, "value":"co"},
+    "15": {"type":"thread", "objid":"0xc1726a6640a7c667", "status":1, "status_name":"yield", "stack_size":9, "stack":[
+        null,
+        {"ref":59},
+        {"ref":24},
+        {"bool":true},
+        {"ref":60},
+        {"ref":24},
+        {"bool":true},
+        {"ref":61},
+        {"ref":62}
+      ], "num_callinfos":7, "callinfos":[
+        {"is_lua":false, "func_slot":0, "top_slot":21, "callstatus":32768, "u2":0, "continuation":null},
+        {"is_lua":true, "func_slot":1, "top_slot":4, "callstatus":65536, "u2":0, "proto":78, "pc_offset":3, "nextra":0},
+        {"is_lua":false, "func_slot":2, "top_slot":24, "callstatus":2654209, "u2":64, "continuation":"base.finishpcall", "ctx":0, "old_errfunc":0},
+        {"is_lua":true, "func_slot":4, "top_slot":7, "callstatus":65536, "u2":0, "proto":80, "pc_offset":3, "nextra":0},
+        {"is_lua":false, "func_slot":5, "top_slot":27, "callstatus":2654209, "u2":112, "continuation":"base.finishpcall", "ctx":0, "old_errfunc":0},
+        {"is_lua":true, "func_slot":7, "top_slot":10, "callstatus":65536, "u2":0, "proto":81, "pc_offset":4, "nextra":0},
+        {"is_lua":false, "func_slot":8, "top_slot":30, "callstatus":32769, "u2":0, "continuation":null}
+      ], "open_upvalues":[]
+    },
+    "16": {"type":"string", "objid":"0x8607c7321697c49d", "length":9, "value":"coroutine"},
+    "17": {"type":"table", "objid":"0x30af74b32e05f342", "array":[], "hsize":8, "hash":[
+        {"idx":0, "key":{"ref":63}, "val":{"ref":64}, "next":0},
+        {"idx":1, "key":{"ref":65}, "val":{"ref":66}, "next":-1},
+        {"idx":2, "key":{"ref":67}, "val":{"ref":62}, "next":0},
+        {"idx":3, "key":{"ref":68}, "val":{"ref":69}, "next":0},
+        {"idx":4, "key":{"ref":70}, "val":{"ref":71}, "next":0},
+        {"idx":5, "key":{"ref":72}, "val":{"ref":73}, "next":0},
+        {"idx":6, "key":{"ref":74}, "val":{"ref":75}, "next":0},
+        {"idx":7, "key":{"ref":76}, "val":{"ref":77}, "next":0}
+      ], "metatable":null, "asize":0
+    },
+    "18": {"type":"string", "objid":"0x168b5740ba2991ff", "length":8, "value":"_VERSION"},
+    "19": {"type":"string", "objid":"0x2c81ea329aeaba69", "length":7, "value":"Lua 5.5"},
+    "20": {"type":"string", "objid":"0x58efd731a91fb004", "length":2, "value":"_G"},
+    "21": {"type":"string", "objid":"0xb283085a8c486789", "length":12, "value":"setmetatable"},
+    "22": {"type":"cclosure", "objid":"0xd1f31274ab1cea5a", "func":"base._G.setmetatable", "upvalues":[]
+    },
+    "23": {"type":"string", "objid":"0x087d70ad2ca29b0a", "length":5, "value":"pcall"},
+    "24": {"type":"cclosure", "objid":"0xcff0446243756e89", "func":"base._G.pcall", "upvalues":[]
+    },
+    "25": {"type":"string", "objid":"0x2731d9fdf756b334", "length":8, "value":"tostring"},
+    "26": {"type":"cclosure", "objid":"0x79ce5dc97509c089", "func":"base._G.tostring", "upvalues":[]
+    },
+    "27": {"type":"string", "objid":"0xf2f8ede6fa70bf5f", "length":8, "value":"tonumber"},
+    "28": {"type":"cclosure", "objid":"0xaeff7d4b5b72ec99", "func":"base._G.tonumber", "upvalues":[]
+    },
+    "29": {"type":"string", "objid":"0x973d7f79fc81e7f3", "length":4, "value":"type"},
+    "30": {"type":"cclosure", "objid":"0xa7d485d747130317", "func":"base._G.type", "upvalues":[]
+    },
+    "31": {"type":"string", "objid":"0xe309713ce13e0797", "length":5, "value":"pairs"},
+    "32": {"type":"cclosure", "objid":"0x2cfa56b4a2af9298", "func":"base._G.pairs", "upvalues":[]
+    },
+    "33": {"type":"string", "objid":"0xb6c90ebacc2b26dd", "length":4, "value":"next"},
+    "34": {"type":"cclosure", "objid":"0xcfca9d2880b2128d", "func":"base._G.next", "upvalues":[]
+    },
+    "35": {"type":"string", "objid":"0x4a1033f1ab1b19dd", "length":6, "value":"select"},
+    "36": {"type":"cclosure", "objid":"0xfebd6a4fbd0a7802", "func":"base._G.select", "upvalues":[]
+    },
+    "37": {"type":"string", "objid":"0x0e49d524d3a854e5", "length":6, "value":"assert"},
+    "38": {"type":"cclosure", "objid":"0x8bd899976cb6021e", "func":"base._G.assert", "upvalues":[]
+    },
+    "39": {"type":"string", "objid":"0x2505f58c05e6526f", "length":6, "value":"rawlen"},
+    "40": {"type":"cclosure", "objid":"0xcf15a836b33fd539", "func":"base._G.rawlen", "upvalues":[]
+    },
+    "41": {"type":"string", "objid":"0xaa2d7708f2a6f456", "length":6, "value":"rawget"},
+    "42": {"type":"cclosure", "objid":"0x1d3169fbb198c267", "func":"base._G.rawget", "upvalues":[]
+    },
+    "43": {"type":"string", "objid":"0x87cf9df80d80457c", "length":6, "value":"ipairs"},
+    "44": {"type":"cclosure", "objid":"0x41956a36dbc51080", "func":"base._G.ipairs", "upvalues":[]
+    },
+    "45": {"type":"string", "objid":"0xc1ebf56d881f3523", "length":4, "value":"load"},
+    "46": {"type":"cclosure", "objid":"0xa7941fa8506d86f0", "func":"base._G.load", "upvalues":[]
+    },
+    "47": {"type":"string", "objid":"0x9e14c3b38f31b195", "length":8, "value":"rawequal"},
+    "48": {"type":"cclosure", "objid":"0x8505be27def25da7", "func":"base._G.rawequal", "upvalues":[]
+    },
+    "49": {"type":"string", "objid":"0x8aa449ce2d0ca1d3", "length":6, "value":"dofile"},
+    "50": {"type":"cclosure", "objid":"0xe1baa47d01408015", "func":"base._G.dofile", "upvalues":[]
+    },
+    "51": {"type":"string", "objid":"0x3cee781815ce206b", "length":14, "value":"collectgarbage"},
+    "52": {"type":"cclosure", "objid":"0x926465ef67d04f3f", "func":"base._G.collectgarbage", "upvalues":[]
+    },
+    "53": {"type":"string", "objid":"0x21c2dd3f1fdb3325", "length":12, "value":"getmetatable"},
+    "54": {"type":"cclosure", "objid":"0xa46b02245b9f3af4", "func":"base._G.getmetatable", "upvalues":[]
+    },
+    "55": {"type":"string", "objid":"0xcf4a7b3c48d45c4f", "length":5, "value":"error"},
+    "56": {"type":"cclosure", "objid":"0x6b18769d9c324eab", "func":"base._G.error", "upvalues":[]
+    },
+    "57": {"type":"string", "objid":"0x654fafc0ee6f9a84", "length":8, "value":"loadfile"},
+    "58": {"type":"cclosure", "objid":"0x4bee618685b05729", "func":"base._G.loadfile", "upvalues":[]
+    },
+    "59": {"type":"lclosure", "objid":"0xa46f85ac5faf045d", "proto":78, "upvalues":[79]},
+    "60": {"type":"lclosure", "objid":"0x97dcc30d0b60ae52", "proto":80, "upvalues":[79]},
+    "61": {"type":"lclosure", "objid":"0x2427cee8d2e4a800", "proto":81, "upvalues":[79]},
+    "62": {"type":"cclosure", "objid":"0x178631649ea56d8a", "func":"coroutine.yield", "upvalues":[]
+    },
+    "63": {"type":"string", "objid":"0x786dd0ab972d849a", "length":7, "value":"running"},
+    "64": {"type":"cclosure", "objid":"0xf311e1c1d9823f53", "func":"coroutine.running", "upvalues":[]
+    },
+    "65": {"type":"string", "objid":"0xe2d92833383b377e", "length":6, "value":"resume"},
+    "66": {"type":"cclosure", "objid":"0x1801ebc20183eb48", "func":"coroutine.resume", "upvalues":[]
+    },
+    "67": {"type":"string", "objid":"0x8bc946409c88cb8f", "length":5, "value":"yield"},
+    "68": {"type":"string", "objid":"0x2d2898ce1f8cef8e", "length":5, "value":"close"},
+    "69": {"type":"cclosure", "objid":"0x0ead39ebf60cc176", "func":"coroutine.close", "upvalues":[]
+    },
+    "70": {"type":"string", "objid":"0xef08a61a384aadee", "length":6, "value":"status"},
+    "71": {"type":"cclosure", "objid":"0x33cffc116cf4f2f0", "func":"coroutine.status", "upvalues":[]
+    },
+    "72": {"type":"string", "objid":"0xdad9841bd5324d12", "length":4, "value":"wrap"},
+    "73": {"type":"cclosure", "objid":"0x17b1332cd96c043d", "func":"coroutine.wrap", "upvalues":[]
+    },
+    "74": {"type":"string", "objid":"0x581d666dc9c63f77", "length":6, "value":"create"},
+    "75": {"type":"cclosure", "objid":"0xca4b25a23588ff96", "func":"coroutine.create", "upvalues":[]
+    },
+    "76": {"type":"string", "objid":"0xd94fa4a9067dc0c4", "length":11, "value":"isyieldable"},
+    "77": {"type":"cclosure", "objid":"0x8aeb093d93e71bbf", "func":"coroutine.isyieldable", "upvalues":[]
+    },
+    "78": {"type":"proto", "objid":"0x9e94f67a91a8b89f", "params":0, "is_vararg":false, "max_stack":2, "num_instructions":4, "constants":[{"ref":23}], "sub_protos":[80], "upvalues":[
+        {"name":{"ref":82}, "instack":0, "idx":0, "kind":0}
+      ], "locvars":[], "source":{"ref":83}, "line_defined":1, "last_line_defined":7
+    },
+    "79": {"type":"upvalue_closed", "objid":"0x5cb85fd265949fd2", "value":{"ref":3}},
+    "80": {"type":"proto", "objid":"0xdda64e04828f136d", "params":0, "is_vararg":false, "max_stack":2, "num_instructions":4, "constants":[{"ref":23}], "sub_protos":[81], "upvalues":[
+        {"name":{"ref":82}, "instack":0, "idx":0, "kind":0}
+      ], "locvars":[], "source":{"ref":83}, "line_defined":2, "last_line_defined":6
+    },
+    "81": {"type":"proto", "objid":"0x3e784199b71ea792", "params":0, "is_vararg":false, "max_stack":2, "num_instructions":5, "constants":[{"ref":16},{"ref":67},{"ref":84}], "sub_protos":[], "upvalues":[
+        {"name":{"ref":82}, "instack":0, "idx":0, "kind":0}
+      ], "locvars":[], "source":{"ref":83}, "line_defined":3, "last_line_defined":5
+    },
+    "82": {"type":"string", "objid":"0x0724ea9269d42a72", "length":4, "value":"_ENV"},
+    "83": {"type":"string", "objid":"0x89607b27da843f55", "length":145, "value":"co = coroutine.create(function()\n  pcall(function()\n    pcall(function()\n      coroutine.yield('deep')\n    end)\n  end)\nend)\ncoroutine.resume(co)\n"},
+    "84": {"type":"string", "objid":"0x1d08970c8bcea7c1", "length":4, "value":"deep"}
+  }
+}
