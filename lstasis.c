@@ -1355,10 +1355,24 @@ static void fill_thread(DeserState *d, lua_State *th, int is_main) {
       pc_off = rb_i32(rb);
       nextra = rb_i32(rb);
     } else {
-      uint8_t has_kont = rb_u8(rb);
+      uint8_t has_kont;
+      if (!rb_ok(rb, 1)) { d->error = 1; break; }
+      has_kont = rb_u8(rb);
       if (has_kont) {
-        uint16_t knlen = rb_u16(rb);
-        const char *kname = (const char *)(rb->data + rb->pos);
+        uint16_t knlen;
+        const char *kname;
+        if (!rb_ok(rb, 2)) { d->error = 1; break; }
+        knlen = rb_u16(rb);
+        /* knlen name bytes + ctx(u64) + old_errfunc(u64) */
+        if (!rb_ok(rb, (size_t)knlen + 16)) {
+          if (!d->error) {
+            d->error = 1;
+            snprintf(d->errmsg, sizeof(d->errmsg),
+                     "truncated C continuation record");
+          }
+          break;
+        }
+        kname = (const char *)(rb->data + rb->pos);
         rb->pos += knlen;
         kfn   = kont_by_name(kname, knlen);
         kctx  = (int64_t)rb_u64(rb);

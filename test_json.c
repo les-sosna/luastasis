@@ -237,7 +237,7 @@ static void test_nested_pcalls(void) {
   lua_State *L = lua_newstate(luaL_alloc, NULL, 0);
   luaL_requiref(L, LUA_GNAME, luaopen_base, 1);     lua_pop(L, 1);
   luaL_requiref(L, LUA_COLIBNAME, luaopen_coroutine, 1); lua_pop(L, 1);
-  dostr(L,
+  if (!dostr(L,
     "co = coroutine.create(function()\n"
     "  pcall(function()\n"
     "    pcall(function()\n"
@@ -245,7 +245,12 @@ static void test_nested_pcalls(void) {
     "    end)\n"
     "  end)\n"
     "end)\n"
-    "coroutine.resume(co)\n");
+    "coroutine.resume(co)\n")) {
+    fprintf(stderr, "  FAIL: test_nested_pcalls setup failed\n");
+    g_failures++;
+    lua_close(L);
+    return;
+  }
   check_snapshot(L, base_co_libs, "test_nested_pcalls", NESTED_GOLDEN);
   lua_close(L);
 }
