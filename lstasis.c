@@ -806,6 +806,26 @@ static void wobj_cclosure(WBuf *b, SerState *s, CClosure *cl) {
     write_tv(b, s, &cl->upvalue[i]);
 }
 
+/* Recognized built-in continuations (lua_KFunction), mapped to/from a stable
+** name so a C call frame suspended in one (e.g. a yielded pcall) can be
+** round-tripped without depending on the continuation's (non-portable)
+** address. */
+static const char *kont_name (lua_KFunction k) {
+  const lstasis_Kont *kt;
+  if (k == NULL) return NULL;
+  for (kt = lstasis_builtin_konts(); kt->name; kt++)
+    if (kt->k == k) return kt->name;
+  return NULL;
+}
+
+static lua_KFunction kont_by_name (const char *name, size_t len) {
+  const lstasis_Kont *kt;
+  for (kt = lstasis_builtin_konts(); kt->name; kt++)
+    if (strlen(kt->name) == len && memcmp(kt->name, name, len) == 0)
+      return kt->k;
+  return NULL;
+}
+
 static void wobj_thread(WBuf *b, SerState *s, lua_State *th) {
   int32_t nstack;
   int32_t nci;
@@ -828,19 +848,68 @@ static void wobj_thread(WBuf *b, SerState *s, lua_State *th) {
     wb_i32(b, foff);
     wb_i32(b, toff);
     wb_u32(b, ci->callstatus);
-    wb_i32(b, ci->u2.funcidx);
+    /* u2 (funcidx/nyield/nres) is a transient union, only meaningful while a
+    ** call/yield/return is in progress. It must survive a suspend in two
+    ** cases: a frame that yielded inside a yieldable pcall (CIST_YPCALL ->
+    ** funcidx, used by finishpcallk on error recovery) and a frame that
+    ** yielded while closing to-be-closed variables (CIST_CLSRET -> nres).
+    ** Everywhere else — notably the base_ci, which Lua never initializes — it
+    ** is stale/uninitialized, so serializing it unconditionally made two
+    ** independently built states diverge by one byte. Persist the live value
+    ** only when callstatus says it is live; otherwise a deterministic 0.
+    ** (nyield need not persist: it is consumed within the same lua_resume that
+    ** sets it.) */
+    wb_i32(b, (ci->callstatus & (CIST_YPCALL | CIST_CLSRET)) ? ci->u2.funcidx : 0);
     if (isLua(ci)) {
       TValue *fv = s2v(ci->func.p);
       uint32_t proto_id = ID_NULL;
-      int32_t pc_off = 0, nextra = ci->u.l.nextraargs;
+      int32_t pc_off = 0, nextra = 0;
       if (ttisLclosure(fv)) {
         LClosure *cl = clLvalue(fv);
         proto_id = ser_get_id(s, obj2gco(cl->p));
         pc_off   = (int32_t)(ci->u.l.savedpc - cl->p->code);
+        /* u.l.nextraargs is set by buildhiddenargs only for functions with
+        ** hidden varargs (PF_VAHID) and read only under that same flag; for
+        ** every other Lua frame it is uninitialized, so serializing it raw
+        ** made two identical coroutines diverge. Persist it only when the
+        ** proto actually has varargs; otherwise a deterministic 0. */
+        if (cl->p->flag & PF_VAHID)
+          nextra = ci->u.l.nextraargs;
       }
       wb_u32(b, proto_id);
       wb_i32(b, pc_off);
       wb_i32(b, nextra);
+    }
+    else {
+      /* A C frame's pending continuation u.c.k is a function pointer the loader
+      ** cannot recreate by address. If it is one of the recognized built-in
+      ** continuations (e.g. the one pcall/xpcall installs) we serialize it by
+      ** name together with the ctx/old_errfunc the resume path needs, so the
+      ** coroutine round-trips. Any other continuation — notably one supplied
+      ** to lua_pcallk by user C code — is not restorable, so reject the save
+      ** rather than emit a snapshot that aborts in finishCcall on reload.
+      ** (base_ci and a plain coroutine.yield frame have u.c.k == NULL.) */
+      lua_KFunction k = ci->u.c.k;
+      const char *kn = kont_name(k);
+      if (k == NULL) {
+        wb_u8(b, 0);  /* no continuation */
+      }
+      else if (kn != NULL) {
+        wb_u8(b, 1);
+        wb_u16(b, (uint16_t)strlen(kn));
+        wb_write(b, kn, strlen(kn));
+        wb_u64(b, (uint64_t)(int64_t)ci->u.c.ctx);
+        wb_u64(b, (uint64_t)(int64_t)ci->u.c.old_errfunc);
+      }
+      else {
+        if (!s->error) {
+          s->error = 1;
+          snprintf(s->errmsg, sizeof(s->errmsg),
+                   "cannot serialize a coroutine suspended in an unrecognized "
+                   "C continuation (only built-in continuations are supported)");
+        }
+        wb_u8(b, 0);  /* keep the stream well-formed; the error aborts the save */
+      }
     }
     if (ci == th->ci) break;
   }
@@ -1279,15 +1348,50 @@ static void fill_thread(DeserState *d, lua_State *th, int is_main) {
     uint32_t pid    = ID_NULL;
     int32_t pc_off  = 0;
     int32_t nextra  = 0;
+    lua_KFunction kfn = NULL;       /* C-frame continuation, if any */
+    int64_t kctx = 0, kerrf = 0;
     if (is_lua) {
       pid    = rb_u32(rb);
       pc_off = rb_i32(rb);
       nextra = rb_i32(rb);
+    } else {
+      uint8_t has_kont;
+      if (!rb_ok(rb, 1)) { d->error = 1; break; }
+      has_kont = rb_u8(rb);
+      if (has_kont) {
+        uint16_t knlen;
+        const char *kname;
+        if (!rb_ok(rb, 2)) { d->error = 1; break; }
+        knlen = rb_u16(rb);
+        /* knlen name bytes + ctx(u64) + old_errfunc(u64) */
+        if (!rb_ok(rb, (size_t)knlen + 16)) {
+          if (!d->error) {
+            d->error = 1;
+            snprintf(d->errmsg, sizeof(d->errmsg),
+                     "truncated C continuation record");
+          }
+          break;
+        }
+        kname = (const char *)(rb->data + rb->pos);
+        rb->pos += knlen;
+        kfn   = kont_by_name(kname, knlen);
+        kctx  = (int64_t)rb_u64(rb);
+        kerrf = (int64_t)rb_u64(rb);
+        if (!kfn && !d->error) {
+          int n = knlen < 200 ? (int)knlen : 200;
+          d->error = 1;
+          snprintf(d->errmsg, sizeof(d->errmsg),
+                   "unknown C continuation '%.*s'", n, kname);
+        }
+      }
     }
 
     cur->func.p     = th->stack.p + foff;
     cur->top.p      = th->stack.p + toff;
     cur->callstatus = (l_uint32)cstat;
+    /* u2 is a transient union: 0 for frames where it was not live, the real
+    ** funcidx/nres for the yielded pcall / tbc-close frames (see wobj_thread).
+    ** Restore it so every CallInfo has a deterministic value. */
     cur->u2.funcidx = u2v;
 
     if (is_lua) {
@@ -1296,9 +1400,11 @@ static void fill_thread(DeserState *d, lua_State *th, int is_main) {
       cur->u.l.nextraargs = nextra;
       cur->u.l.trap       = 0;
     } else {
-      cur->u.c.k           = NULL;
-      cur->u.c.old_errfunc = 0;
-      cur->u.c.ctx         = 0;
+      /* Restore the continuation recognized at save time (NULL if none). The
+      ** resume path (finishCcall/finishpcallk) needs k, ctx and old_errfunc. */
+      cur->u.c.k           = kfn;
+      cur->u.c.old_errfunc = (ptrdiff_t)kerrf;
+      cur->u.c.ctx         = (lua_KContext)kctx;
     }
 
     th->ci = cur;

@@ -366,7 +366,242 @@ static void test_coroutine(void) {
 }
 
 /* -----------------------------------------------------------------------
-** Test 7b – coroutine locals survive save/reload
+** Test 7a – coroutine yielded from NESTED Lua frames survives save/reload
+**
+** Suspends a coroutine mid-yield with several Lua CallInfos live (outer ->
+** middle -> inner), so the thread record round-trips multiple call frames
+** (each carrying the transient u2 placeholder). After reload the coroutine
+** must resume through every frame and return the correct final value.
+** --------------------------------------------------------------------- */
+static void test_coroutine_nested_yield(void) {
+  int r, status, nres;
+  lua_State *L, *L2, *co;
+  long long y1;
+  printf("== test_coroutine_nested_yield ==\n");
+  L = new_state();
+  r = run(L,
+    "function inner(x)\n"
+    "  coroutine.yield(x + 1)\n"     /* suspend deep in a Lua call chain */
+    "  return x + 100\n"
+    "end\n"
+    "function middle(x) return inner(x) + 10 end\n"
+    "function outer()  return middle(5) + 1000 end\n"
+    "co = coroutine.create(outer)\n"
+    "ok1, y1 = coroutine.resume(co)\n"   /* runs outer->middle->inner; yields 6 */
+  );
+  if (r != LUA_OK) { FAIL("setup", "lua error"); return; }
+
+  get_global(L, "y1");
+  y1 = lua_tointeger(L, -1);
+  lua_pop(L, 1);
+  CHECK(y1 == 6, "yielded 6 before save", "got %lld", y1);
+
+  L2 = save_reload(L, NULL, std_libs);
+  lua_close(L);
+  if (!L2) { FAIL("reload", "NULL — nested yield should be serializable"); return; }
+
+  get_global(L2, "co");
+  CHECK(lua_type(L2,-1)==LUA_TTHREAD, "co is thread after reload", "type=%d", lua_type(L2,-1));
+  co = lua_tothread(L2, -1);
+  lua_pop(L2, 1);
+
+  /* Resume: inner returns 105, middle adds 10 -> 115, outer adds 1000 -> 1115. */
+  nres = 0;
+  status = lua_resume(co, L2, 0, &nres);
+  CHECK(status == LUA_OK, "restored nested coroutine finished", "status=%d", status);
+  if (status == LUA_OK && nres >= 1) {
+    CHECK(lua_tointeger(co,-1) == 1115, "coroutine returned 1115 through all frames",
+          "got %lld", (long long)lua_tointeger(co,-1));
+  }
+  lua_close(L2);
+}
+
+/* -----------------------------------------------------------------------
+** Test 7b – coroutine yielded INSIDE pcall round-trips and recovers
+**
+** When a coroutine yields across pcall, the pcall C frame is suspended with
+** the built-in 'finishpcall' continuation (CIST_YPCALL) and ci->u2.funcidx /
+** ci->u.c.{ctx,old_errfunc} live. lstasis recognizes that continuation by
+** name and restores those fields, so the reloaded coroutine resumes — and on
+** the error raised after the yield, pcall recovers via finishpcallk (which
+** reads exactly those restored fields).
+** --------------------------------------------------------------------- */
+static void test_coroutine_pcall_yield(void) {
+  int r, status, nres;
+  lua_State *L, *L2, *co;
+  printf("== test_coroutine_pcall_yield ==\n");
+  L = new_state();
+  r = run(L,
+    "function inner()\n"
+    "  coroutine.yield('paused')\n"   /* suspend INSIDE pcall: CIST_YPCALL, funcidx live */
+    "  error('boom')\n"               /* on resume: pcall recovers via finishpcallk */
+    "end\n"
+    "function body()\n"
+    "  local ok, msg = pcall(inner)\n"
+    "  pcall_ok = ok\n"
+    "  pcall_msg = msg\n"
+    "  return 'finished'\n"
+    "end\n"
+    "co = coroutine.create(body)\n"
+    "ok0, y0 = coroutine.resume(co)\n" /* runs to yield('paused'); co suspended inside pcall */
+  );
+  if (r != LUA_OK) { FAIL("setup", "lua error"); return; }
+
+  get_global(L, "y0");
+  CHECK(lua_type(L,-1)==LUA_TSTRING && strcmp(lua_tostring(L,-1),"paused")==0,
+        "yielded 'paused' before save", "got '%s'", lua_tostring(L,-1));
+  lua_pop(L, 1);
+
+  L2 = save_reload(L, NULL, std_libs);
+  lua_close(L);
+  if (!L2) { FAIL("reload", "NULL — pcall-yield should now be serializable"); return; }
+
+  get_global(L2, "co");
+  CHECK(lua_type(L2,-1)==LUA_TTHREAD, "co is thread after reload", "type=%d", lua_type(L2,-1));
+  co = lua_tothread(L2, -1);
+  lua_pop(L2, 1);
+
+  nres = 0;
+  status = lua_resume(co, L2, 0, &nres);
+  CHECK(status == LUA_OK, "restored coroutine finished cleanly", "status=%d", status);
+  if (status == LUA_OK && nres >= 1) {
+    CHECK(lua_type(co,-1)==LUA_TSTRING && strcmp(lua_tostring(co,-1),"finished")==0,
+          "coroutine returned 'finished'", "got '%s'", lua_tostring(co,-1));
+  }
+
+  get_global(L2, "pcall_ok");
+  CHECK(lua_type(L2,-1)==LUA_TBOOLEAN && lua_toboolean(L2,-1)==0,
+        "pcall recovered the error after reload (ok=false)", "type=%d", lua_type(L2,-1));
+  lua_pop(L2, 1);
+
+  get_global(L2, "pcall_msg");
+  CHECK(lua_type(L2,-1)==LUA_TSTRING && strstr(lua_tostring(L2,-1),"boom")!=NULL,
+        "pcall error message preserved", "got '%s'", lua_tostring(L2,-1));
+  lua_pop(L2, 1);
+
+  lua_close(L2);
+}
+
+/* -----------------------------------------------------------------------
+** Test 7b2 – coroutine suspended in a USER (non-builtin) continuation is
+** rejected. user_callk() calls its argument through lua_callk with its own
+** continuation; when that argument yields, the user_callk frame is left with
+** a continuation lstasis does not recognize, so the save must refuse cleanly.
+** --------------------------------------------------------------------- */
+static int usercont_k (lua_State *L, int status, lua_KContext ctx) {
+  (void)status; (void)ctx;
+  return lua_gettop(L);
+}
+static int user_callk (lua_State *L) {
+  lua_callk(L, 0, LUA_MULTRET, 0, usercont_k);  /* yieldable, user continuation */
+  return usercont_k(L, LUA_OK, 0);
+}
+static const luaL_Reg usertest_funcs[] = {
+  {"user_callk", user_callk}, {NULL, NULL}
+};
+static int luaopen_usertest (lua_State *L) { luaL_newlib(L, usertest_funcs); return 1; }
+
+static void test_coroutine_usercont_rejected(void) {
+  static const lstasis_Lib user_libs[] = {
+    {"base", luaopen_base}, {"package", luaopen_package}, {"coroutine", luaopen_coroutine},
+    {"table", luaopen_table}, {"string", luaopen_string}, {"usertest", luaopen_usertest},
+    {NULL, NULL}
+  };
+  int r, rc;
+  size_t sz = 0;
+  unsigned char *buf = NULL;
+  lua_State *L;
+  printf("== test_coroutine_usercont_rejected ==\n");
+  L = new_state();
+  luaL_requiref(L, "usertest", luaopen_usertest, 1);
+  lua_pop(L, 1);
+  r = run(L,
+    "co = coroutine.create(function()\n"
+    "  usertest.user_callk(function() coroutine.yield('x') end)\n"
+    "end)\n"
+    "coroutine.resume(co)\n"   /* suspended in user_callk's lua_callk: user continuation */
+  );
+  if (r != LUA_OK) { FAIL("setup", "lua error"); lua_close(L); return; }
+
+  rc = lstasis_save(L, user_libs, &buf, &sz);
+  CHECK(rc != 0, "save rejects coroutine suspended in a user C continuation", "rc=%d", rc);
+  free(buf);
+  lua_close(L);
+}
+
+/* -----------------------------------------------------------------------
+** Test 7b3 – several stacked builtin continuations survive save/reload
+**
+** A single yield deep inside pcall(level1) -> level1 -> pcall(level2) leaves
+** TWO C frames suspended at once, each with its own finishpcall continuation
+** (and its own ctx/old_errfunc/funcidx). Every CallInfo is serialized
+** independently, so both must restore and unwind correctly on resume.
+** --------------------------------------------------------------------- */
+static void test_coroutine_stacked_pcall_yield(void) {
+  int r, status, nres;
+  lua_State *L, *L2, *co;
+  printf("== test_coroutine_stacked_pcall_yield ==\n");
+  L = new_state();
+  r = run(L,
+    "function level2()\n"
+    "  coroutine.yield('deep')\n"   /* one yield, two pcalls live below it */
+    "  error('boom')\n"
+    "end\n"
+    "function level1()\n"
+    "  inner_ok, inner_msg = pcall(level2)\n"  /* inner pcall */
+    "  return 'L1DONE'\n"
+    "end\n"
+    "function body()\n"
+    "  outer_ok, outer_r = pcall(level1)\n"    /* outer pcall */
+    "  return 'finished'\n"
+    "end\n"
+    "co = coroutine.create(body)\n"
+    "ok0, y0 = coroutine.resume(co)\n"
+  );
+  if (r != LUA_OK) { FAIL("setup", "lua error"); return; }
+  get_global(L, "y0");
+  CHECK(lua_type(L,-1)==LUA_TSTRING && strcmp(lua_tostring(L,-1),"deep")==0,
+        "yielded 'deep' before save", "got '%s'", lua_tostring(L,-1));
+  lua_pop(L, 1);
+
+  L2 = save_reload(L, NULL, std_libs);
+  lua_close(L);
+  if (!L2) { FAIL("reload", "NULL — stacked pcalls should be serializable"); return; }
+
+  get_global(L2, "co");
+  co = lua_tothread(L2, -1);
+  lua_pop(L2, 1);
+
+  nres = 0;
+  status = lua_resume(co, L2, 0, &nres);
+  CHECK(status == LUA_OK, "restored coroutine finished cleanly", "status=%d", status);
+  if (status == LUA_OK && nres >= 1)
+    CHECK(lua_type(co,-1)==LUA_TSTRING && strcmp(lua_tostring(co,-1),"finished")==0,
+          "coroutine returned 'finished'", "got '%s'", lua_tostring(co,-1));
+
+  /* inner pcall caught the error; outer pcall saw level1 return normally. */
+  get_global(L2, "inner_ok");
+  CHECK(lua_type(L2,-1)==LUA_TBOOLEAN && lua_toboolean(L2,-1)==0,
+        "inner pcall caught error (inner_ok=false)", "type=%d", lua_type(L2,-1));
+  lua_pop(L2, 1);
+  get_global(L2, "inner_msg");
+  CHECK(lua_type(L2,-1)==LUA_TSTRING && strstr(lua_tostring(L2,-1),"boom")!=NULL,
+        "inner error message preserved", "got '%s'", lua_tostring(L2,-1));
+  lua_pop(L2, 1);
+  get_global(L2, "outer_ok");
+  CHECK(lua_type(L2,-1)==LUA_TBOOLEAN && lua_toboolean(L2,-1)==1,
+        "outer pcall succeeded (outer_ok=true)", "type=%d", lua_type(L2,-1));
+  lua_pop(L2, 1);
+  get_global(L2, "outer_r");
+  CHECK(lua_type(L2,-1)==LUA_TSTRING && strcmp(lua_tostring(L2,-1),"L1DONE")==0,
+        "outer pcall got level1's return", "got '%s'", lua_tostring(L2,-1));
+  lua_pop(L2, 1);
+
+  lua_close(L2);
+}
+
+/* -----------------------------------------------------------------------
+** Test 7c – coroutine locals survive save/reload
 ** The coroutine yields its local variables so we can verify them via the
 ** public API without touching internal lua_State fields.
 ** --------------------------------------------------------------------- */
@@ -774,6 +1009,10 @@ int main(void) {
   test_shared_upvalue();
   test_long_string();
   test_coroutine();
+  test_coroutine_nested_yield();
+  test_coroutine_pcall_yield();
+  test_coroutine_stacked_pcall_yield();
+  test_coroutine_usercont_rejected();
   test_stack_restored();
   test_recursive_closure();
   test_globals_env();

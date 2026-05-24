@@ -66,6 +66,15 @@ static const lstasis_Lib std_libs[] = {
 
 #define EMPTY_GOLDEN  "testdata/json/empty.json"
 #define LIBS_GOLDEN   "testdata/json/with_libs.json"
+#define NESTED_GOLDEN "testdata/json/nested_pcalls.json"
+
+/* Minimal lib set for the structure-inspection case: base provides pcall;
+** coroutine is added because a suspended coroutine is needed to capture live
+** call frames (coroutine is the lib that exposes yield). Keeping the set tiny
+** keeps the golden small enough to read. */
+static const lstasis_Lib base_co_libs[] = {
+  {"base", luaopen_base}, {"coroutine", luaopen_coroutine}, {NULL, NULL}
+};
 
 static int g_update = 0;
 static int g_failures = 0;
@@ -213,6 +222,39 @@ static void test_with_libs(void) {
   lua_close(L);
 }
 
+static int dostr(lua_State *L, const char *s) {
+  if (luaL_dostring(L, s) != LUA_OK) {
+    fprintf(stderr, "  lua error: %s\n", lua_tostring(L, -1));
+    lua_pop(L, 1);
+    return 0;
+  }
+  return 1;
+}
+
+/* Test 3: a coroutine suspended inside two nested pcalls — to inspect the
+** serialized call-frame / continuation structure (stacked finishpcall). */
+static void test_nested_pcalls(void) {
+  lua_State *L = lua_newstate(luaL_alloc, NULL, 0);
+  luaL_requiref(L, LUA_GNAME, luaopen_base, 1);     lua_pop(L, 1);
+  luaL_requiref(L, LUA_COLIBNAME, luaopen_coroutine, 1); lua_pop(L, 1);
+  if (!dostr(L,
+    "co = coroutine.create(function()\n"
+    "  pcall(function()\n"
+    "    pcall(function()\n"
+    "      coroutine.yield('deep')\n"   /* suspend: two pcall frames live */
+    "    end)\n"
+    "  end)\n"
+    "end)\n"
+    "coroutine.resume(co)\n")) {
+    fprintf(stderr, "  FAIL: test_nested_pcalls setup failed\n");
+    g_failures++;
+    lua_close(L);
+    return;
+  }
+  check_snapshot(L, base_co_libs, "test_nested_pcalls", NESTED_GOLDEN);
+  lua_close(L);
+}
+
 int main(int argc, char **argv) {
   int i;
   printf("=== LuaStasis JSON snapshot tests ===\n");
@@ -228,6 +270,7 @@ int main(int argc, char **argv) {
 
   test_empty_state();
   test_with_libs();
+  test_nested_pcalls();
 
   printf("=== %s ===\n", g_failures ? "FAILED" : "Done");
   return g_failures ? 1 : 0;
