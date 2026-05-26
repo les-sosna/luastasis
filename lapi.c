@@ -632,13 +632,17 @@ static void lstasis_push_lcf_singleton (lua_State *L, lua_CFunction fn) {
   global_State *g = G(L);
   TValue key;
   TValue cached;
+  lu_byte tag;
   CClosure *cl;
   if (g->lcf_cache == NULL)
     g->lcf_cache = luaH_new(L);  /* lazy, GC-rooted in lgc.c */
   /* Key: a light userdata wrapping the fn pointer. */
   setpvalue(&key, cast_voidp(cast_sizet(fn)));
-  luaH_get(g->lcf_cache, &key, &cached);
-  if (ttisCclosure(&cached)) {
+  /* luaH_get leaves 'cached' untouched on a miss, so the return tag must
+  ** gate the read of 'cached' — otherwise 'ttisCclosure' inspects
+  ** uninitialized stack memory and can spuriously take the hit path. */
+  tag = luaH_get(g->lcf_cache, &key, &cached);
+  if (!tagisempty(tag) && ttisCclosure(&cached)) {
     setobj2s(L, L->top.p, &cached);
     api_incr_top(L);
     return;
