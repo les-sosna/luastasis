@@ -394,6 +394,50 @@ static void build_cfmap_for_load(CFuncRevMap *m, const lstasis_Lib *libs) {
 }
 
 /* -----------------------------------------------------------------------
+** Userdata persistence helper
+**
+** A full userdata opts into serialization via a truthy '__persist' field on
+** its metatable. The check reads the metatable Table* directly at the raw GC
+** level (no lua_State, no metamethods — save runs with no Lua executing). The
+** userdata is then serialized as a self-contained record: its raw payload bytes
+** plus its metatable as an ordinary discovered object, relinked by id on load.
+** --------------------------------------------------------------------- */
+
+/* Look up a string key in a Table's hash part at the raw GC level, returning
+** the value TValue (or NULL if absent). Only string keys are searched, which
+** is all the __persist lookup needs. Mirrors the raw node walk in wobj_table;
+** does not run Lua or invoke __index. */
+static const TValue *raw_table_getstr(Table *t, const char *key) {
+  unsigned i;
+  size_t klen;
+  if (t == NULL) return NULL;
+  klen = strlen(key);
+  for (i = 0; i < sizenode(t); i++) {
+    Node *n = &t->node[i];
+    if (keyisnil(n)) continue;
+    /* __persist is a short literal key, always interned as a short string;
+    ** accept long-string keys too for robustness. */
+    if (keytt(n) == ctb(LUA_VSHRSTR) || keytt(n) == ctb(LUA_VLNGSTR)) {
+      TString *ks = keystrval(n);
+      size_t slen;
+      const char *s = getlstr(ks, slen);
+      if (slen == klen && memcmp(s, key, klen) == 0)
+        return gval(n);
+    }
+  }
+  return NULL;
+}
+
+/* Returns 1 if the metatable opts the userdata into persistence, i.e. it has a
+** truthy '__persist' field. mt may be NULL. */
+static int ud_metatable_persists(Table *mt) {
+  const TValue *v;
+  if (mt == NULL) return 0;
+  v = raw_table_getstr(mt, "__persist");
+  return v != NULL && !l_isfalse(v);
+}
+
+/* -----------------------------------------------------------------------
 ** Growable write buffer
 ** --------------------------------------------------------------------- */
 typedef struct { uint8_t *data; size_t size; size_t cap; } WBuf;
@@ -531,6 +575,12 @@ static int is_serializable(GCObject *o) {
     return 1;
   case LUA_TFUNCTION:
     return o->tt == LUA_VLCL || o->tt == LUA_VCCL;
+  case LUA_TUSERDATA:
+    /* Only full userdata that opts in via a truthy '__persist' metatable field
+    ** is serialized; everything else stays nil (the historical behavior).
+    ** The metatable is reachable directly from the GCObject, so no lua_State
+    ** is needed here. */
+    return ud_metatable_persists(gco2u(o)->metatable);
   default:
     return 0;
   }
@@ -606,6 +656,13 @@ static void process_obj(SerState *s, ObjQ *q, GCObject *o) {
       discover_obj(s, q, obj2gco(uv));
     break;
   }
+  case LUA_TUSERDATA: {
+    Udata *u = gco2u(o);
+    for (int i = 0; i < u->nuvalue; i++)
+      discover_tv(s, q, &u->uv[i].uv);
+    if (u->metatable) discover_obj(s, q, obj2gco(u->metatable));
+    break;
+  }
   default: break;
   }
 }
@@ -649,13 +706,15 @@ static void write_tv(WBuf *b, SerState *s, const TValue *v) {
     wb_u16(b, nlen);
     wb_write(b, name, nlen);
   } else if (iscollectable(v)) {
-    /* Full userdata (LUA_TUSERDATA) is unsupported by discover_obj, so
-    ** it never gets an id. If this always wrote `tag + 0` (5 bytes) then
+    /* Full userdata that did not opt in via __persist is rejected by
+    ** discover_obj, so it never gets an id. If this wrote `tag + 0` (5 bytes)
     ** the loader would resolve a zero id back to nil anyway — but a save of
     ** the post-load state then would write LUA_VNIL (1 byte), making the
-    ** roundtrip non-byte-identical. Substitute nil directly here so
-    ** original and re-saved snapshots match. */
-    if (novariant(rawtt(v)) == LUA_TUSERDATA) {
+    ** roundtrip non-byte-identical. Substitute nil directly here so original
+    ** and re-saved snapshots match. A __persist userdata, by contrast, has an
+    ** id (ser_get_id != 0) and goes through the normal collectable path below,
+    ** so repeated references restore as the same object. */
+    if (novariant(rawtt(v)) == LUA_TUSERDATA && ser_get_id(s, gcvalue(v)) == 0) {
       wb_u8(b, LUA_VNIL);
     } else {
       wb_u8(b, rawtt(v));
@@ -676,6 +735,40 @@ static void wobj_string(WBuf *b, TString *ts) {
   size_t len; const char *str = getlstr(ts, len);
   wb_u32(b, (uint32_t)len);
   wb_write(b, str, len);
+}
+
+/*
+** Userdata format:
+**   payload_len : u32                  - number of raw payload bytes
+**   payload     : payload_len bytes    - opaque blob (verbatim, uninterpreted)
+**   mt_id       : u32                  - metatable object id (load-authoritative;
+**                                        the metatable is a normal discovered
+**                                        object relinked to the udata by id)
+**
+** Only reached for userdata that discover_obj accepted, i.e. whose metatable
+** has a truthy __persist field. The record is self-contained: its payload bytes
+** plus its metatable (serialized as an ordinary object, relinked by id on load).
+**
+** User values are not supported: a persistable userdata with nuvalue > 0 is a
+** hard save error rather than a silent drop (a typical POD-handle userdata has
+** nuvalue 0).
+*/
+static void wobj_userdata(WBuf *b, SerState *s, Udata *u) {
+  if (u->nuvalue != 0) {
+    if (!s->error) {
+      s->error = 1;
+      snprintf(s->errmsg, sizeof(s->errmsg),
+               "cannot serialize persistable userdata with %d user value(s) "
+               "(only nuvalue 0 is supported)", (int)u->nuvalue);
+    }
+    /* keep the stream well-formed; the error aborts the save */
+    wb_u32(b, 0);
+    wb_u32(b, ID_NULL);
+    return;
+  }
+  wb_u32(b, (uint32_t)u->len);
+  wb_write(b, getudatamem(u), u->len);
+  wb_u32(b, u->metatable ? ser_get_id(s, obj2gco(u->metatable)) : ID_NULL);
 }
 
 /*
@@ -935,6 +1028,7 @@ static void write_obj(WBuf *b, SerState *s, GCObject *o) {
                                   (o->tt == LUA_VCCL) ? OBJ_CCLOSURE : 0; break;
   case LUA_TUPVAL:    type_code = upisopen(gco2upv(o)) ? OBJ_UPVAL_OPEN : OBJ_UPVAL_CLOSED; break;
   case LUA_TTHREAD:   type_code = OBJ_THREAD;   break;
+  case LUA_TUSERDATA: type_code = OBJ_USERDATA; break;
   default:            type_code = 0; break;
   }
   if (type_code == 0) return;
@@ -958,6 +1052,7 @@ static void write_obj(WBuf *b, SerState *s, GCObject *o) {
   case OBJ_UPVAL_CLOSED: wobj_upval   (b, s, gco2upv(o)); break;
   case OBJ_UPVAL_OPEN:   break;
   case OBJ_THREAD:       wobj_thread  (b, s, gco2th(o)); break;
+  case OBJ_USERDATA:     wobj_userdata(b, s, gco2u(o)); break;
   }
 
   data_sz = (uint32_t)(b->size - data_start);
@@ -1439,6 +1534,56 @@ static void fill_thread(DeserState *d, lua_State *th, int is_main) {
   th->status = saved_status;
 }
 
+/*
+** Fill a full userdata created blank in Pass 1. The object (with the recorded
+** payload size) already lives at id_to_ptr[id]; this copies the raw payload
+** bytes into it and relinks its metatable — a normal discovered object — by its
+** serialized id. All record fields were already bounds-checked in Pass 1, but
+** re-validate defensively. */
+static void fill_userdata(DeserState *d, Udata *u) {
+  RBuf *rb = &d->rb;
+  uint32_t plen;
+  uint32_t mt_id;
+  if (!rb_ok(rb, 4)) { d->error = 1; return; }
+  plen = rb_u32(rb);
+  if (!rb_ok(rb, (size_t)plen + 4)) {  /* payload + mt_id */
+    if (!d->error) {
+      d->error = 1;
+      snprintf(d->errmsg, sizeof(d->errmsg),
+               "truncated userdata payload (len=%u)", (unsigned)plen);
+    }
+    return;
+  }
+  /* u was allocated in Pass 1 with this exact length (same recorded field), so
+  ** they must match for a well-formed buffer; a mismatch means a corrupt or
+  ** forged stream — fail rather than copy a wrong-sized blob. */
+  if ((size_t)plen != u->len) {
+    if (!d->error) {
+      d->error = 1;
+      snprintf(d->errmsg, sizeof(d->errmsg),
+               "userdata payload length mismatch (record=%u, object=%zu)",
+               (unsigned)plen, u->len);
+    }
+    return;
+  }
+  if (plen > 0)
+    memcpy(getudatamem(u), rb->data + rb->pos, plen);
+  rb->pos += plen;
+  mt_id = rb_u32(rb);
+  /* mt_id is attacker-controlled; bound it against the object table before
+  ** dereferencing id_to_ptr (id 0 = no metatable). */
+  if (mt_id > d->num_objects) {
+    if (!d->error) {
+      d->error = 1;
+      snprintf(d->errmsg, sizeof(d->errmsg),
+               "userdata metatable id %u out of range (num_objects=%u)",
+               (unsigned)mt_id, (unsigned)d->num_objects);
+    }
+    return;
+  }
+  u->metatable = mt_id ? (Table *)d->id_to_ptr[mt_id] : NULL;
+}
+
 /* -----------------------------------------------------------------------
 ** lstasis_load
 ** --------------------------------------------------------------------- */
@@ -1622,6 +1767,21 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
       d.id_to_ptr[id]  = th;
       break;
     }
+    case OBJ_USERDATA: {
+      /* Create a blank full userdata of the recorded payload size (nuvalue 0)
+      ** so its id is referenceable before fill. The payload bytes and metatable
+      ** are filled in Pass 2g. The payload length is attacker-controlled, so
+      ** bounds-check before advancing the cursor. */
+      uint32_t plen;
+      Udata   *u;
+      if (!rb_ok(&d.rb, 4)) goto fail_L;
+      plen = rb_u32(&d.rb);
+      if (!rb_ok(&d.rb, (size_t)plen + 4)) goto fail_L;  /* payload + mt_id */
+      d.rb.pos += plen + 4;          /* payload + mt_id (re-read in Pass 2g) */
+      u = luaS_newudata(L, (size_t)plen, 0);
+      d.id_to_ptr[id] = u;
+      break;
+    }
     default: break;
     }
   }
@@ -1700,6 +1860,16 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
     if (id == main_thread_id) continue;
     d.rb.pos = d.obj_offsets[i];
     fill_thread(&d, (lua_State *)d.id_to_ptr[id], 0);
+  }
+
+  /* ----------------------------------------------------------------
+  ** Pass 2g: fill userdata (payload bytes + metatable relinked by id)
+  ** -------------------------------------------------------------- */
+  for (uint32_t i = 0; i < d.num_objects; i++) {
+    if (d.obj_types[i] != OBJ_USERDATA) continue;
+    d.rb.pos = d.obj_offsets[i];
+    fill_userdata(&d, (Udata *)d.id_to_ptr[i + 1]);
+    if (d.error) break;
   }
 
   if (d.error) {
