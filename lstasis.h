@@ -58,7 +58,7 @@ const lstasis_Kont *lstasis_builtin_konts(void);
 ** metatable is reattached by object id on load. Full userdata without
 ** '__persist' is serialized as nil (the historical behavior). A persistable
 ** userdata that carries Lua user values (nuvalue > 0) is a hard save error for
-** now (object handles use nuvalue 0).
+** now (typical persistable handles have nuvalue 0).
 **
 ** On success, *out_buf points to the buffer (caller must free) and
 ** *out_size holds its length.  Returns 0 on success, -1 on error.
