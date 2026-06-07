@@ -364,6 +364,30 @@ static void dump_upval_closed(RBuf *rb) {
   jtv(rb);
 }
 
+/* OBJ_USERDATA record: payload_len:u32, payload, mt_id:u32. The payload is an
+** opaque blob, so emit its length, a short hex preview, and the metatable id. */
+static void dump_userdata(RBuf *rb) {
+  uint32_t plen = rb_u32(rb);
+  uint32_t mt_id;
+  uint32_t preview;
+  if (rb->err) return;
+  /* Avoid the (pos + plen + 4) overflow that wraps on 32-bit size_t; compare
+  ** against remaining room instead (rb->pos <= rb->size is maintained). A
+  ** truncated record sets rb->err so the object is tagged "parse_error", as the
+  ** other dump_* helpers do. */
+  if ((size_t)plen > rb->size - rb->pos ||
+      rb->size - rb->pos - (size_t)plen < 4) { rb->err = 1; return; }
+  fprintf(g_out, ", \"payload_len\":%u, \"payload\":\"", plen);
+  preview = plen < 32 ? plen : 32;  /* cap the inline hex preview */
+  for (uint32_t i = 0; i < preview; i++)
+    fprintf(g_out, "%02x", rb->data[rb->pos + i]);
+  if (plen > preview) fputs("...", g_out);
+  fputc('"', g_out);
+  rb->pos += plen;
+  mt_id = rb_u32(rb);
+  fprintf(g_out, ", \"metatable\":%u", mt_id);
+}
+
 static const char *thread_status_name(uint8_t s) {
   switch (s) {
   case 0: return "ok";
@@ -471,6 +495,7 @@ static const char *obj_type_name(uint8_t t) {
   case OBJ_UPVAL_OPEN:   return "upvalue_open";
   case OBJ_THREAD:       return "thread";
   case OBJ_CCLOSURE:     return "cclosure";
+  case OBJ_USERDATA:     return "userdata";
   default:               return "unknown";
   }
 }
@@ -478,7 +503,8 @@ static const char *obj_type_name(uint8_t t) {
 /* Types whose dump functions emit no internal newlines. */
 static int obj_is_single_line(uint8_t t) {
   return t == OBJ_STRING || t == OBJ_LCLOSURE ||
-         t == OBJ_UPVAL_CLOSED || t == OBJ_UPVAL_OPEN;
+         t == OBJ_UPVAL_CLOSED || t == OBJ_UPVAL_OPEN ||
+         t == OBJ_USERDATA;
 }
 
 /* -------------------------------------------------------------------------
@@ -599,6 +625,7 @@ int lstasis_tojson(const unsigned char *buf, size_t sz, FILE *out) {
     case OBJ_UPVAL_CLOSED: dump_upval_closed(&rb); break;
     case OBJ_UPVAL_OPEN:   break;
     case OBJ_THREAD:       dump_thread(&rb);       break;
+    case OBJ_USERDATA:     dump_userdata(&rb);     break;
     default: break;
     }
 

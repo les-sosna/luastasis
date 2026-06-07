@@ -998,6 +998,275 @@ static void test_save_preserves_state(void) {
 }
 
 /* -----------------------------------------------------------------------
+** Test 14 – full userdata serialization via a __persist metatable
+**
+** A userdata opts into persistence by a truthy __persist field on its
+** metatable. lstasis serializes it self-contained — raw payload bytes plus its
+** metatable (an ordinary serialized object) — and reconstructs it from the
+** buffer alone. This mirrors how a host application persists an opaque POD
+** handle whose metatable carries __persist.
+** --------------------------------------------------------------------- */
+
+#define TEST_UD_TNAME "test.ud"
+
+/* Build the persistable metatable once per state, then create a userdata
+** holding a single int payload and leave it on the stack at -1. luaL_newmetatable
+** auto-sets the metatable's __name to "test.ud"; we add __persist = true. */
+static void make_persistable_ud(lua_State *L, int payload) {
+  int *p;
+  if (luaL_newmetatable(L, TEST_UD_TNAME)) {
+    lua_pushboolean(L, 1);
+    lua_setfield(L, -2, "__persist");
+  }
+  lua_pop(L, 1);  /* drop the metatable; it stays anchored in the registry */
+  p = (int *)lua_newuserdatauv(L, sizeof(int), 0);
+  *p = payload;
+  luaL_setmetatable(L, TEST_UD_TNAME);
+}
+
+/* Helper: does _G[name] hold our persistable userdata with the given int?
+** Reads the raw payload directly so it does not depend on metatable identity. */
+static int global_ud_int(lua_State *L, const char *name, int *out) {
+  int ok = 0;
+  lua_getglobal(L, name);
+  if (lua_type(L, -1) == LUA_TUSERDATA) {
+    *out = *(int *)lua_touserdata(L, -1);
+    ok = 1;
+  }
+  lua_pop(L, 1);
+  return ok;
+}
+
+static void test_userdata(void) {
+  lua_State *L;
+  lua_State *L2;
+  int val = 0;
+  printf("== test_userdata ==\n");
+  L = new_state();
+
+  make_persistable_ud(L, 0xBEEF);
+  /* Stash the SAME userdata in two globals and a table entry to test that
+  ** identity (pointer equality) is preserved across save/load. */
+  lua_pushvalue(L, -1); lua_setglobal(L, "ud_a");
+  lua_pushvalue(L, -1); lua_setglobal(L, "ud_b");
+  lua_newtable(L);
+  lua_pushvalue(L, -2); lua_rawseti(L, -2, 1);
+  lua_setglobal(L, "ud_t");
+  lua_pop(L, 1);  /* drop the original userdata */
+
+  L2 = save_reload(L, NULL, std_libs);
+  lua_close(L);
+  if (!L2) { FAIL("reload", "load returned NULL"); return; }
+
+  /* Payload survived. */
+  CHECK(global_ud_int(L2, "ud_a", &val) && val == 0xBEEF,
+        "userdata payload round-trips", "got 0x%X", val);
+
+  /* Metatable reattached → resolves as test.ud (verifies the mt object and its
+  ** __name round-tripped and the udata is relinked to it). */
+  lua_getglobal(L2, "ud_a");
+  CHECK(luaL_testudata(L2, -1, TEST_UD_TNAME) != NULL,
+        "userdata metatable round-trips", "no/foreign metatable");
+
+  /* Identity: ud_a, ud_b and ud_t[1] must be the SAME object. */
+  lua_getglobal(L2, "ud_b");
+  CHECK(lua_rawequal(L2, -1, -2), "shared references keep identity (ud_a==ud_b)",
+        "distinct objects");
+  lua_getglobal(L2, "ud_t");
+  lua_rawgeti(L2, -1, 1);
+  /* stack: ud_a(-4), ud_b(-3), ud_t(-2), ud_t[1](-1) — compare against ud_a. */
+  CHECK(lua_rawequal(L2, -1, -4), "table entry shares identity (ud_a==ud_t[1])",
+        "distinct objects");
+  lua_pop(L2, 4);
+
+  lua_close(L2);
+}
+
+/* A full userdata WITHOUT __persist must still serialize as nil (historical
+** behavior). */
+static void test_userdata_non_persistable(void) {
+  lua_State *L;
+  lua_State *L2;
+  printf("== test_userdata_non_persistable ==\n");
+  L = new_state();
+
+  /* Plain userdata, no metatable / no __persist. */
+  lua_newuserdatauv(L, sizeof(int), 0);
+  lua_setglobal(L, "plain_ud");
+
+  L2 = save_reload(L, NULL, std_libs);
+  lua_close(L);
+  if (!L2) { FAIL("reload", "load returned NULL"); return; }
+
+  lua_getglobal(L2, "plain_ud");
+  CHECK(lua_type(L2, -1) == LUA_TNIL,
+        "non-persistable userdata becomes nil", "type=%d", lua_type(L2, -1));
+  lua_pop(L2, 1);
+  lua_close(L2);
+}
+
+/* A persistable userdata carrying Lua user values (nuvalue > 0) is rejected
+** at save time rather than silently dropping the user values. */
+static void test_userdata_uservalue_rejected(void) {
+  size_t sz;
+  unsigned char *buf;
+  int rc;
+  lua_State *L;
+  int *p;
+  printf("== test_userdata_uservalue_rejected ==\n");
+  L = new_state();
+  if (luaL_newmetatable(L, TEST_UD_TNAME)) {
+    lua_pushboolean(L, 1);
+    lua_setfield(L, -2, "__persist");
+  }
+  lua_pop(L, 1);
+  /* userdata with one user value */
+  p = (int *)lua_newuserdatauv(L, sizeof(int), 1);
+  *p = 5;
+  lua_pushstring(L, "uv");
+  lua_setiuservalue(L, -2, 1);
+  luaL_setmetatable(L, TEST_UD_TNAME);
+  lua_setglobal(L, "ud_uv");
+
+  buf = NULL; sz = 0;
+  rc = lstasis_save(L, std_libs, &buf, &sz);
+  CHECK(rc != 0, "save rejects persistable userdata with user values",
+        "rc=%d", rc);
+  free(buf);
+  lua_close(L);
+}
+
+/* save -> load -> save must be byte-identical with a persistable userdata in
+** the state (the determinism requirement, exercised with userdata).
+**
+** This builds a base-library-only state on purpose: the io library's standard
+** file handles (io.stdin/stdout/stderr) are NON-persistable userdata that
+** serialize to nil, and on reload fill_table drops those nil-valued slots,
+** unanchoring their key strings so the post-load GC sweeps them — making a
+** second save a few strings shorter. That pre-existing nil-drop effect is
+** unrelated to __persist userdata; excluding io isolates this test to the
+** feature under test. */
+static const lstasis_Lib base_libs[] = {
+  {"base", luaopen_base},
+  {NULL, NULL}
+};
+
+/* Gated to deterministic mode: byte-identical re-serialization is only a
+** LUASTASIS_DETERMINISTIC guarantee. In vanilla mode objects hash by address,
+** so two distinct states may lay their tables out differently and re-save to
+** different bytes (observable e.g. under ASAN, which shifts allocations). */
+#if LUASTASIS_DETERMINISTIC
+static void test_userdata_byte_stable(void) {
+  size_t n1, n2;
+  unsigned char *s1, *s2;
+  lua_State *L;
+  lua_State *L2;
+  int ok;
+  printf("== test_userdata_byte_stable ==\n");
+  L = luaL_newstate();
+  luaL_requiref(L, LUA_GNAME, luaopen_base, 1);
+  lua_pop(L, 1);
+  make_persistable_ud(L, 0x1234);
+  lua_pushvalue(L, -1); lua_setglobal(L, "ud_a");
+  lua_setglobal(L, "ud_b");  /* same object in two globals */
+
+  s1 = NULL; n1 = 0;
+  if (lstasis_save(L, base_libs, &s1, &n1) != 0) {
+    FAIL("save1", "first save failed"); lua_close(L); return;
+  }
+  L2 = lstasis_load(s1, n1, base_libs);
+  lua_close(L);
+  if (!L2) { FAIL("reload", "load returned NULL"); free(s1); return; }
+
+  s2 = NULL; n2 = 0;
+  if (lstasis_save(L2, base_libs, &s2, &n2) != 0) {
+    FAIL("save2", "second save failed"); free(s1); lua_close(L2); return;
+  }
+  ok = (n1 == n2) && (memcmp(s1, s2, n1) == 0);
+  CHECK(ok, "save->load->save byte-identical with userdata",
+        "n1=%zu n2=%zu", n1, n2);
+  free(s1); free(s2);
+  lua_close(L2);
+}
+#endif /* LUASTASIS_DETERMINISTIC */
+
+/* A persistable userdata whose metatable defines __gc must run that finalizer
+** after load, exactly as a freshly-created one would. The loader relinks
+** u->metatable with a raw assignment, bypassing lua_setmetatable's
+** luaC_checkfinalizer; Pass 2h re-registers the finalizer so it still fires.
+** The finalizer is a plain Lua function (a serializable closure) that bumps a
+** global counter; we drop the only reference post-load and force a collection. */
+static void test_userdata_gc_finalizer(void) {
+  lua_State *L;
+  lua_State *L2;
+  int ran;
+  printf("== test_userdata_gc_finalizer ==\n");
+  L = luaL_newstate();
+  luaL_requiref(L, LUA_GNAME, luaopen_base, 1);
+  lua_pop(L, 1);
+
+  /* metatable: __persist=true, __gc = function() gc_ran = (gc_ran or 0) + 1 end */
+  luaL_newmetatable(L, "gc.ud");
+  lua_pushboolean(L, 1); lua_setfield(L, -2, "__persist");
+  if (luaL_loadstring(L, "gc_ran = (gc_ran or 0) + 1") != LUA_OK) {
+    FAIL("loadstring", "could not compile __gc body"); lua_close(L); return;
+  }
+  lua_setfield(L, -2, "__gc");
+  lua_pop(L, 1);  /* drop metatable; stays anchored in the registry */
+
+  lua_newuserdatauv(L, sizeof(int), 0);
+  luaL_setmetatable(L, "gc.ud");
+  lua_setglobal(L, "u");
+
+  L2 = save_reload(L, NULL, base_libs);
+  lua_close(L);
+  if (!L2) { FAIL("reload", "load returned NULL"); return; }
+
+  /* gc_ran was nil in the saved state; finalizing the loaded userdata sets it. */
+  lua_pushnil(L2); lua_setglobal(L2, "u");
+  lua_gc(L2, LUA_GCCOLLECT, 0);
+
+  lua_getglobal(L2, "gc_ran");
+  ran = (int)lua_tointeger(L2, -1);
+  CHECK(lua_isinteger(L2, -1) && ran == 1,
+        "restored userdata runs its __gc finalizer once", "gc_ran=%d", ran);
+  lua_pop(L2, 1);
+  lua_close(L2);
+}
+
+/* The loader rebuilds tables by writing hash nodes directly, which leaves each
+** table's fast tag-method cache (Table.flags) stale (luaH_new marks every fast
+** metamethod absent). Pass 2h invalidates it so metamethod dispatch keeps
+** working on loaded metatables — without it, t.missing skips __index. */
+static void test_loaded_metatable_index(void) {
+  lua_State *L;
+  lua_State *L2;
+  const char *res;
+  printf("== test_loaded_metatable_index ==\n");
+  L = luaL_newstate();
+  luaL_requiref(L, LUA_GNAME, luaopen_base, 1);
+  lua_pop(L, 1);
+  if (run(L, "t = setmetatable({}, "
+              "{ __index = function(_, k) return 'IDX:' .. k end })") != LUA_OK) {
+    FAIL("setup", "%s", lua_tostring(L, -1)); lua_close(L); return;
+  }
+
+  L2 = save_reload(L, NULL, base_libs);
+  lua_close(L);
+  if (!L2) { FAIL("reload", "load returned NULL"); return; }
+
+  if (run(L2, "probe = t.missing") != LUA_OK) {
+    FAIL("index", "%s", lua_tostring(L2, -1)); lua_close(L2); return;
+  }
+  lua_getglobal(L2, "probe");
+  res = lua_tostring(L2, -1);
+  CHECK(res != NULL && strcmp(res, "IDX:missing") == 0,
+        "loaded metatable still dispatches __index", "got %s", res ? res : "(nil)");
+  lua_pop(L2, 1);
+  lua_close(L2);
+}
+
+/* -----------------------------------------------------------------------
 ** main
 ** --------------------------------------------------------------------- */
 int main(void) {
@@ -1020,6 +1289,14 @@ int main(void) {
   test_cfunc();
   test_vararg();
   test_save_preserves_state();
+  test_userdata();
+  test_userdata_non_persistable();
+  test_userdata_uservalue_rejected();
+  test_userdata_gc_finalizer();
+  test_loaded_metatable_index();
+#if LUASTASIS_DETERMINISTIC
+  test_userdata_byte_stable();
+#endif
   printf("=== Done ===\n");
   return 0;
 }

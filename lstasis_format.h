@@ -19,6 +19,7 @@
 #define OBJ_UPVAL_OPEN   6   /* data lives in the owning thread record */
 #define OBJ_THREAD       7
 #define OBJ_CCLOSURE     8   /* C closure: fn name + inline Lua upvalues */
+#define OBJ_USERDATA     9   /* full userdata: payload_len + raw payload + metatable id */
 
 /* -------------------------------------------------------------------------
 ** Inline tag for a light-C-function TValue in the stream.

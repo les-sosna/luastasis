@@ -5,8 +5,12 @@
 **
 ** Supports: nil, bool, integer, float, string, table, Lua closures,
 **           upvalues (open + closed), prototypes, coroutines,
-**           C functions (LCF and C closures) via a name registry.
-** Not supported: full userdata, light userdata.
+**           C functions (LCF and C closures) via a name registry,
+**           full userdata that opts in via a truthy __persist metatable field
+**           (serialized self-contained: raw payload bytes + its metatable).
+** Not supported: light userdata; full userdata without a __persist metatable
+**                field (serialized as nil, exactly as before); persistable
+**                userdata carrying Lua user values (nuvalue > 0) — hard error.
 */
 
 #ifndef lstasis_h
@@ -47,6 +51,18 @@ const lstasis_Kont *lstasis_builtin_konts(void);
 ** Serialize the full state of L into a freshly malloc'd byte buffer.
 ** libs: NULL-or-{NULL,NULL}-terminated list of library openers used to
 **       resolve C functions.  Unknown C functions are a hard error.
+**
+** Full userdata is serialized when (and only when) its metatable has a truthy
+** '__persist' field; such a value is self-contained — its raw payload bytes and
+** its metatable (an ordinary serialized object) round-trip together, and the
+** metatable is reattached by object id on load. The metatable round-trips in
+** full, so its metamethods work after load: dispatch (__index, __eq, ...) is
+** restored and a __gc finalizer is re-registered, so it runs when the loaded
+** object is collected. Full userdata without '__persist' is serialized as nil
+** (the historical behavior). A persistable userdata that carries Lua user
+** values (nuvalue > 0) is a hard save error for now (typical persistable
+** handles have nuvalue 0); so is a payload of 2^32 bytes or more.
+**
 ** On success, *out_buf points to the buffer (caller must free) and
 ** *out_size holds its length.  Returns 0 on success, -1 on error.
 */
