@@ -1074,7 +1074,8 @@ static void test_userdata(void) {
         "distinct objects");
   lua_getglobal(L2, "ud_t");
   lua_rawgeti(L2, -1, 1);
-  CHECK(lua_rawequal(L2, -1, -3), "table entry shares identity (ud_a==ud_t[1])",
+  /* stack: ud_a(-4), ud_b(-3), ud_t(-2), ud_t[1](-1) — compare against ud_a. */
+  CHECK(lua_rawequal(L2, -1, -4), "table entry shares identity (ud_a==ud_t[1])",
         "distinct objects");
   lua_pop(L2, 4);
 
@@ -1150,6 +1151,11 @@ static const lstasis_Lib base_libs[] = {
   {NULL, NULL}
 };
 
+/* Gated to deterministic mode: byte-identical re-serialization is only a
+** LUASTASIS_DETERMINISTIC guarantee. In vanilla mode objects hash by address,
+** so two distinct states may lay their tables out differently and re-save to
+** different bytes (observable e.g. under ASAN, which shifts allocations). */
+#if LUASTASIS_DETERMINISTIC
 static void test_userdata_byte_stable(void) {
   size_t n1, n2;
   unsigned char *s1, *s2;
@@ -1182,6 +1188,83 @@ static void test_userdata_byte_stable(void) {
   free(s1); free(s2);
   lua_close(L2);
 }
+#endif /* LUASTASIS_DETERMINISTIC */
+
+/* A persistable userdata whose metatable defines __gc must run that finalizer
+** after load, exactly as a freshly-created one would. The loader relinks
+** u->metatable with a raw assignment, bypassing lua_setmetatable's
+** luaC_checkfinalizer; Pass 2h re-registers the finalizer so it still fires.
+** The finalizer is a plain Lua function (a serializable closure) that bumps a
+** global counter; we drop the only reference post-load and force a collection. */
+static void test_userdata_gc_finalizer(void) {
+  lua_State *L;
+  lua_State *L2;
+  int ran;
+  printf("== test_userdata_gc_finalizer ==\n");
+  L = luaL_newstate();
+  luaL_requiref(L, LUA_GNAME, luaopen_base, 1);
+  lua_pop(L, 1);
+
+  /* metatable: __persist=true, __gc = function() gc_ran = (gc_ran or 0) + 1 end */
+  luaL_newmetatable(L, "gc.ud");
+  lua_pushboolean(L, 1); lua_setfield(L, -2, "__persist");
+  if (luaL_loadstring(L, "gc_ran = (gc_ran or 0) + 1") != LUA_OK) {
+    FAIL("loadstring", "could not compile __gc body"); lua_close(L); return;
+  }
+  lua_setfield(L, -2, "__gc");
+  lua_pop(L, 1);  /* drop metatable; stays anchored in the registry */
+
+  lua_newuserdatauv(L, sizeof(int), 0);
+  luaL_setmetatable(L, "gc.ud");
+  lua_setglobal(L, "u");
+
+  L2 = save_reload(L, NULL, base_libs);
+  lua_close(L);
+  if (!L2) { FAIL("reload", "load returned NULL"); return; }
+
+  /* gc_ran was nil in the saved state; finalizing the loaded userdata sets it. */
+  lua_pushnil(L2); lua_setglobal(L2, "u");
+  lua_gc(L2, LUA_GCCOLLECT, 0);
+
+  lua_getglobal(L2, "gc_ran");
+  ran = (int)lua_tointeger(L2, -1);
+  CHECK(lua_isinteger(L2, -1) && ran == 1,
+        "restored userdata runs its __gc finalizer once", "gc_ran=%d", ran);
+  lua_pop(L2, 1);
+  lua_close(L2);
+}
+
+/* The loader rebuilds tables by writing hash nodes directly, which leaves each
+** table's fast tag-method cache (Table.flags) stale (luaH_new marks every fast
+** metamethod absent). Pass 2h invalidates it so metamethod dispatch keeps
+** working on loaded metatables — without it, t.missing skips __index. */
+static void test_loaded_metatable_index(void) {
+  lua_State *L;
+  lua_State *L2;
+  const char *res;
+  printf("== test_loaded_metatable_index ==\n");
+  L = luaL_newstate();
+  luaL_requiref(L, LUA_GNAME, luaopen_base, 1);
+  lua_pop(L, 1);
+  if (run(L, "t = setmetatable({}, "
+              "{ __index = function(_, k) return 'IDX:' .. k end })") != LUA_OK) {
+    FAIL("setup", "%s", lua_tostring(L, -1)); lua_close(L); return;
+  }
+
+  L2 = save_reload(L, NULL, base_libs);
+  lua_close(L);
+  if (!L2) { FAIL("reload", "load returned NULL"); return; }
+
+  if (run(L2, "probe = t.missing") != LUA_OK) {
+    FAIL("index", "%s", lua_tostring(L2, -1)); lua_close(L2); return;
+  }
+  lua_getglobal(L2, "probe");
+  res = lua_tostring(L2, -1);
+  CHECK(res != NULL && strcmp(res, "IDX:missing") == 0,
+        "loaded metatable still dispatches __index", "got %s", res ? res : "(nil)");
+  lua_pop(L2, 1);
+  lua_close(L2);
+}
 
 /* -----------------------------------------------------------------------
 ** main
@@ -1209,7 +1292,11 @@ int main(void) {
   test_userdata();
   test_userdata_non_persistable();
   test_userdata_uservalue_rejected();
+  test_userdata_gc_finalizer();
+  test_loaded_metatable_index();
+#if LUASTASIS_DETERMINISTIC
   test_userdata_byte_stable();
+#endif
   printf("=== Done ===\n");
   return 0;
 }

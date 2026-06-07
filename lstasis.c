@@ -17,6 +17,7 @@
 #include "lstate.h"
 #include "lobject.h"
 #include "ltable.h"
+#include "ltm.h"
 #include "lfunc.h"
 #include "lstring.h"
 #include "lgc.h"
@@ -478,6 +479,15 @@ static void wb_patch_u32(WBuf *b, size_t pos, uint32_t v) {
 typedef struct { const uint8_t *data; size_t pos; size_t size; } RBuf;
 
 static int rb_ok(const RBuf *b, size_t need) { return b->pos + need <= b->size; }
+/* True if at least `plen` + `extra` more bytes remain from the cursor, computed
+** WITHOUT forming `plen + extra`. The idiom `rb_ok(b, (size_t)plen + 4)` wraps
+** when size_t is 32-bit (wasm32 / 32-bit Android) and `plen` is near UINT32_MAX,
+** which would let a crafted length slip past the bounds check; this does not.
+** Assumes the b->pos <= b->size invariant the read helpers maintain. */
+static int rb_room(const RBuf *b, uint32_t plen, size_t extra) {
+  size_t avail = b->size - b->pos;
+  return (size_t)plen <= avail && extra <= avail - (size_t)plen;
+}
 static uint8_t  rb_u8 (RBuf *b) { uint8_t  v; memcpy(&v, b->data + b->pos, sizeof(v)); b->pos += sizeof(v); return v; }
 static uint16_t rb_u16(RBuf *b) { uint16_t v; memcpy(&v, b->data + b->pos, sizeof(v)); b->pos += sizeof(v); return v; }
 static uint32_t rb_u32(RBuf *b) { uint32_t v; memcpy(&v, b->data + b->pos, sizeof(v)); b->pos += sizeof(v); return v; }
@@ -762,6 +772,20 @@ static void wobj_userdata(WBuf *b, SerState *s, Udata *u) {
                "(only nuvalue 0 is supported)", (int)u->nuvalue);
     }
     /* keep the stream well-formed; the error aborts the save */
+    wb_u32(b, 0);
+    wb_u32(b, ID_NULL);
+    return;
+  }
+  if (u->len > 0xFFFFFFFFu) {
+    /* payload_len is a u32 in the record; a larger payload would be silently
+    ** truncated on the wire while the full bytes are still emitted, desyncing
+    ** the stream. Reject rather than corrupt. */
+    if (!s->error) {
+      s->error = 1;
+      snprintf(s->errmsg, sizeof(s->errmsg),
+               "cannot serialize userdata payload of %zu bytes (max %u)",
+               u->len, 0xFFFFFFFFu);
+    }
     wb_u32(b, 0);
     wb_u32(b, ID_NULL);
     return;
@@ -1546,7 +1570,7 @@ static void fill_userdata(DeserState *d, Udata *u) {
   uint32_t mt_id;
   if (!rb_ok(rb, 4)) { d->error = 1; return; }
   plen = rb_u32(rb);
-  if (!rb_ok(rb, (size_t)plen + 4)) {  /* payload + mt_id */
+  if (!rb_room(rb, plen, 4)) {  /* payload + mt_id (overflow-safe) */
     if (!d->error) {
       d->error = 1;
       snprintf(d->errmsg, sizeof(d->errmsg),
@@ -1578,6 +1602,18 @@ static void fill_userdata(DeserState *d, Udata *u) {
       snprintf(d->errmsg, sizeof(d->errmsg),
                "userdata metatable id %u out of range (num_objects=%u)",
                (unsigned)mt_id, (unsigned)d->num_objects);
+    }
+    return;
+  }
+  /* The metatable id must reference an actual table. Without this a forged
+  ** stream could point it at a string/thread/proto, and later metamethod
+  ** access would treat that object as a Table — type confusion. */
+  if (mt_id && d->obj_types[mt_id - 1] != OBJ_TABLE) {
+    if (!d->error) {
+      d->error = 1;
+      snprintf(d->errmsg, sizeof(d->errmsg),
+               "userdata metatable id %u is not a table (type=%u)",
+               (unsigned)mt_id, (unsigned)d->obj_types[mt_id - 1]);
     }
     return;
   }
@@ -1776,8 +1812,8 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
       Udata   *u;
       if (!rb_ok(&d.rb, 4)) goto fail_L;
       plen = rb_u32(&d.rb);
-      if (!rb_ok(&d.rb, (size_t)plen + 4)) goto fail_L;  /* payload + mt_id */
-      d.rb.pos += plen + 4;          /* payload + mt_id (re-read in Pass 2g) */
+      if (!rb_room(&d.rb, plen, 4)) goto fail_L;  /* payload + mt_id (overflow-safe) */
+      d.rb.pos += (size_t)plen + 4;  /* payload + mt_id (re-read in Pass 2g) */
       u = luaS_newudata(L, (size_t)plen, 0);
       d.id_to_ptr[id] = u;
       break;
@@ -1875,6 +1911,42 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   if (d.error) {
     fprintf(stderr, "lstasis_load: %s\n", d.errmsg);
     goto fail_L;
+  }
+
+  /* ----------------------------------------------------------------
+  ** Pass 2h: repair tag-method caches and register __gc finalizers.
+  **
+  ** fill_table wrote each table's nodes directly (bypassing luaH_set), so
+  ** every loaded table still carries luaH_new's optimistic flags==maskflags,
+  ** which caches EVERY fast metamethod (__index, __newindex, __eq, __gc, ...)
+  ** as absent. Left as-is, metamethod dispatch silently breaks on any loaded
+  ** metatable (e.g. t.missing would skip __index). Invalidate the cache on
+  ** every loaded table so the real fields are consulted again.
+  **
+  ** Then, for every userdata/table whose metatable defines __gc, register it
+  ** as a finalizer exactly as lua_setmetatable would (luaC_checkfinalizer) —
+  ** the raw u->metatable/t->metatable assignment skipped that, so finalizers
+  ** would never run on the loaded objects. The cache must be invalidated
+  ** first, since the gfasttm probe inside luaC_checkfinalizer would otherwise
+  ** read the stale "no __gc" bit and skip registration. Neither flags nor
+  ** finalizer-list membership is serialized, so this does not affect
+  ** byte-stability. Loaded objects are still reachable from the registry, so
+  ** the GCCOLLECT below does not finalize any of them here.
+  ** -------------------------------------------------------------- */
+  for (uint32_t i = 0; i < d.num_objects; i++) {
+    if (d.obj_types[i] == OBJ_TABLE && d.id_to_ptr[i + 1])
+      invalidateTMcache((Table *)d.id_to_ptr[i + 1]);
+  }
+  for (uint32_t i = 0; i < d.num_objects; i++) {
+    void *p = d.id_to_ptr[i + 1];
+    if (!p) continue;
+    if (d.obj_types[i] == OBJ_USERDATA) {
+      Udata *u = (Udata *)p;
+      if (u->metatable) luaC_checkfinalizer(L, obj2gco(u), u->metatable);
+    } else if (d.obj_types[i] == OBJ_TABLE) {
+      Table *t = (Table *)p;
+      if (t->metatable) luaC_checkfinalizer(L, obj2gco(t), t->metatable);
+    }
   }
 
   /* Swap in the restored registry and type metatables */

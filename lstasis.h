@@ -55,10 +55,13 @@ const lstasis_Kont *lstasis_builtin_konts(void);
 ** Full userdata is serialized when (and only when) its metatable has a truthy
 ** '__persist' field; such a value is self-contained — its raw payload bytes and
 ** its metatable (an ordinary serialized object) round-trip together, and the
-** metatable is reattached by object id on load. Full userdata without
-** '__persist' is serialized as nil (the historical behavior). A persistable
-** userdata that carries Lua user values (nuvalue > 0) is a hard save error for
-** now (typical persistable handles have nuvalue 0).
+** metatable is reattached by object id on load. The metatable round-trips in
+** full, so its metamethods work after load: dispatch (__index, __eq, ...) is
+** restored and a __gc finalizer is re-registered, so it runs when the loaded
+** object is collected. Full userdata without '__persist' is serialized as nil
+** (the historical behavior). A persistable userdata that carries Lua user
+** values (nuvalue > 0) is a hard save error for now (typical persistable
+** handles have nuvalue 0); so is a payload of 2^32 bytes or more.
 **
 ** On success, *out_buf points to the buffer (caller must free) and
 ** *out_size holds its length.  Returns 0 on success, -1 on error.
