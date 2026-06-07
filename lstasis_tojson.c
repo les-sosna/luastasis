@@ -370,10 +370,13 @@ static void dump_userdata(RBuf *rb) {
   uint32_t plen = rb_u32(rb);
   uint32_t mt_id;
   uint32_t preview;
+  if (rb->err) return;
   /* Avoid the (pos + plen + 4) overflow that wraps on 32-bit size_t; compare
-  ** against remaining room instead (rb->pos <= rb->size is maintained). */
-  if (rb->err || (size_t)plen > rb->size - rb->pos ||
-      rb->size - rb->pos - (size_t)plen < 4) return;
+  ** against remaining room instead (rb->pos <= rb->size is maintained). A
+  ** truncated record sets rb->err so the object is tagged "parse_error", as the
+  ** other dump_* helpers do. */
+  if ((size_t)plen > rb->size - rb->pos ||
+      rb->size - rb->pos - (size_t)plen < 4) { rb->err = 1; return; }
   fprintf(g_out, ", \"payload_len\":%u, \"payload\":\"", plen);
   preview = plen < 32 ? plen : 32;  /* cap the inline hex preview */
   for (uint32_t i = 0; i < preview; i++)
