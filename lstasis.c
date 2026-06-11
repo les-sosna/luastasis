@@ -8,6 +8,7 @@
 
 #include "lprefix.h"
 
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -523,6 +524,20 @@ typedef struct {
   char       errmsg[256];
 } SerState;
 
+/* Latch a save error: the first failure wins and aborts the save; later
+** failures (often knock-on effects of the first) keep its message. */
+#if defined(__GNUC__)
+__attribute__((format(printf, 2, 3)))
+#endif
+static void ser_fail(SerState *s, const char *fmt, ...) {
+  va_list ap;
+  if (s->error) return;
+  s->error = 1;
+  va_start(ap, fmt);
+  vsnprintf(s->errmsg, sizeof(s->errmsg), fmt, ap);
+  va_end(ap);
+}
+
 static void ser_init(SerState *s) {
   objmap_init(&s->map);
   s->next_id  = 1;
@@ -574,12 +589,10 @@ static void discover_obj(SerState *s, ObjQ *q, GCObject *o);
 
 static void discover_tv(SerState *s, ObjQ *q, const TValue *v) {
   if (iscollectable(v)) discover_obj(s, q, gcvalue(v));
-  else if (ttislightuserdata(v) && !s->error) {
+  else if (ttislightuserdata(v)) {
     /* Light userdata is a raw C pointer with no serializable identity: a hard
     ** save error, latched here so the save aborts before writing any bytes. */
-    s->error = 1;
-    snprintf(s->errmsg, sizeof(s->errmsg),
-             "cannot serialize light userdata (%p)", pvalue(v));
+    ser_fail(s, "cannot serialize light userdata (%p)", pvalue(v));
   }
 }
 
@@ -611,12 +624,9 @@ static void discover_obj(SerState *s, ObjQ *q, GCObject *o) {
     /* Of the real GC object types only non-__persist full userdata fails
     ** is_serializable: a hard save error, latched here so the save aborts
     ** before writing any bytes. */
-    if (novariant(o->tt) == LUA_TUSERDATA && !s->error) {
-      s->error = 1;
-      snprintf(s->errmsg, sizeof(s->errmsg),
-               "cannot serialize userdata without a truthy __persist metatable "
-               "field at %p", (void *)o);
-    }
+    if (novariant(o->tt) == LUA_TUSERDATA)
+      ser_fail(s, "cannot serialize userdata without a truthy __persist "
+                  "metatable field at %p", (void *)o);
     return;
   }
   id = s->next_id++;
@@ -732,11 +742,7 @@ static void write_tv(WBuf *b, SerState *s, const TValue *v) {
     const char *name = cfmap_lookup(&s->cfm, fn);
     uint16_t nlen;
     if (!name) {
-      if (!s->error) {
-        s->error = 1;
-        snprintf(s->errmsg, sizeof(s->errmsg),
-                 "unknown C function at %p", (void *)(uintptr_t)fn);
-      }
+      ser_fail(s, "unknown C function at %p", (void *)(uintptr_t)fn);
       wb_u8(b, LUA_VNIL); /* write nil as fallback to keep format consistent */
       return;
     }
@@ -749,12 +755,8 @@ static void write_tv(WBuf *b, SerState *s, const TValue *v) {
     ** Discovery latches that error before any bytes are written, so this is a
     ** backstop against discovery and write disagreeing on reachability. */
     if (novariant(rawtt(v)) == LUA_TUSERDATA && ser_get_id(s, gcvalue(v)) == 0) {
-      if (!s->error) {
-        s->error = 1;
-        snprintf(s->errmsg, sizeof(s->errmsg),
-                 "cannot serialize userdata without a truthy __persist metatable "
-                 "field at %p", (void *)gcvalue(v));
-      }
+      ser_fail(s, "cannot serialize userdata without a truthy __persist "
+                  "metatable field at %p", (void *)gcvalue(v));
       wb_u8(b, LUA_VNIL);  /* keep the stream well-formed; the error aborts save */
     } else {
       wb_u8(b, rawtt(v));
@@ -766,11 +768,7 @@ static void write_tv(WBuf *b, SerState *s, const TValue *v) {
     /* Light userdata: rejected by discover_tv before the write pass; backstop.
     ** (This else is reached only by light userdata; every other type is handled
     ** by a branch above.) */
-    if (!s->error) {
-      s->error = 1;
-      snprintf(s->errmsg, sizeof(s->errmsg),
-               "cannot serialize light userdata (%p)", pvalue(v));
-    }
+    ser_fail(s, "cannot serialize light userdata (%p)", pvalue(v));
     wb_u8(b, LUA_VNIL);
   }
 }
@@ -803,12 +801,8 @@ static void wobj_string(WBuf *b, TString *ts) {
 */
 static void wobj_userdata(WBuf *b, SerState *s, Udata *u) {
   if (u->nuvalue != 0) {
-    if (!s->error) {
-      s->error = 1;
-      snprintf(s->errmsg, sizeof(s->errmsg),
-               "cannot serialize persistable userdata with %d user value(s) "
-               "(only nuvalue 0 is supported)", (int)u->nuvalue);
-    }
+    ser_fail(s, "cannot serialize persistable userdata with %d user value(s) "
+                "(only nuvalue 0 is supported)", (int)u->nuvalue);
     /* keep the stream well-formed; the error aborts the save */
     wb_u32(b, 0);
     wb_u32(b, ID_NULL);
@@ -818,12 +812,8 @@ static void wobj_userdata(WBuf *b, SerState *s, Udata *u) {
     /* payload_len is a u32 in the record; a larger payload would be silently
     ** truncated on the wire while the full bytes are still emitted, desyncing
     ** the stream. Reject rather than corrupt. */
-    if (!s->error) {
-      s->error = 1;
-      snprintf(s->errmsg, sizeof(s->errmsg),
-               "cannot serialize userdata payload of %zu bytes (max %u)",
-               u->len, 0xFFFFFFFFu);
-    }
+    ser_fail(s, "cannot serialize userdata payload of %zu bytes (max %u)",
+             u->len, 0xFFFFFFFFu);
     wb_u32(b, 0);
     wb_u32(b, ID_NULL);
     return;
@@ -976,11 +966,7 @@ static void wobj_cclosure(WBuf *b, SerState *s, CClosure *cl) {
   lua_CFunction fn = cl->f;
   const char *name = cfmap_lookup(&s->cfm, fn);
   if (!name) {
-    if (!s->error) {
-      s->error = 1;
-      snprintf(s->errmsg, sizeof(s->errmsg),
-               "unknown C closure function at %p", (void *)(uintptr_t)fn);
-    }
+    ser_fail(s, "unknown C closure function at %p", (void *)(uintptr_t)fn);
     wb_u8(b, CFUNC_TAG); wb_u16(b, 0);
     wb_u8(b, 0); /* nuv = 0, keep format consistent */
     return;
@@ -1090,12 +1076,8 @@ static void wobj_thread(WBuf *b, SerState *s, lua_State *th) {
         wb_u64(b, (uint64_t)(int64_t)ci->u.c.old_errfunc);
       }
       else {
-        if (!s->error) {
-          s->error = 1;
-          snprintf(s->errmsg, sizeof(s->errmsg),
-                   "cannot serialize a coroutine suspended in an unrecognized "
-                   "C continuation (only built-in continuations are supported)");
-        }
+        ser_fail(s, "cannot serialize a coroutine suspended in an unrecognized "
+                    "C continuation (only built-in continuations are supported)");
         wb_u8(b, 0);  /* keep the stream well-formed; the error aborts the save */
       }
     }
@@ -1232,6 +1214,47 @@ typedef struct {
   char        errmsg[256];
 } DeserState;
 
+/* Latch a load error: the first failure wins and aborts the load; later
+** failures (often knock-on effects of the first) keep its message. */
+#if defined(__GNUC__)
+__attribute__((format(printf, 2, 3)))
+#endif
+static void des_fail(DeserState *d, const char *fmt, ...) {
+  va_list ap;
+  if (d->error) return;
+  d->error = 1;
+  va_start(ap, fmt);
+  vsnprintf(d->errmsg, sizeof(d->errmsg), fmt, ap);
+  va_end(ap);
+}
+
+/* Expected-type arguments for resolve_obj_id beyond the exact OBJ_* codes
+** (which are 1..9, see lstasis_format.h). */
+#define RESOLVE_ANY    0xFF   /* any object type */
+#define RESOLVE_UPVAL  0xFE   /* OBJ_UPVAL_OPEN or OBJ_UPVAL_CLOSED */
+
+/* Resolve a serialized object id against the object table; id 0 is NULL ("no
+** object"). Every id in the stream is attacker-controlled, so bound it before
+** indexing id_to_ptr and check the referenced object's type code before
+** handing the pointer out: a forged or inconsistent stream could otherwise
+** read past the object table or make the caller treat one object type as
+** another (e.g. a string used as a Table) -- out-of-bounds access / type
+** confusion. Returns the object (or NULL), latching d->error on a bad id. */
+static void *resolve_obj_id(DeserState *d, uint32_t id, unsigned expected,
+                            const char *what) {
+  if (id == 0) return NULL;
+  if (id <= d->num_objects) {
+    uint8_t t = d->obj_types[id - 1];
+    if (t == expected || expected == RESOLVE_ANY ||
+        (expected == RESOLVE_UPVAL &&
+         (t == OBJ_UPVAL_OPEN || t == OBJ_UPVAL_CLOSED)))
+      return d->id_to_ptr[id];
+  }
+  des_fail(d, "%s: invalid object id %u (num_objects=%u)",
+           what, (unsigned)id, (unsigned)d->num_objects);
+  return NULL;
+}
+
 /* read a TValue from the read buffer; GC pointers resolved from id_to_ptr */
 static TValue ds_read_tv(DeserState *d) {
   /* Zero-init the whole TValue (including alignment padding) — callers
@@ -1249,13 +1272,8 @@ static TValue ds_read_tv(DeserState *d) {
     d->rb.pos += nlen;
     fn = cfrev_lookup(&d->cfrev, name, nlen);
     if (!fn) {
-      if (!d->error) {
-        int n;
-        d->error = 1;
-        n = nlen < 200 ? (int)nlen : 200;
-        snprintf(d->errmsg, sizeof(d->errmsg),
-                 "unknown C function identifier '%.*s'", n, name);
-      }
+      des_fail(d, "unknown C function identifier '%.*s'",
+               nlen < 200 ? (int)nlen : 200, name);
       setnilvalue(&v);
     } else {
       setfvalue(&v, fn);
@@ -1264,29 +1282,24 @@ static TValue ds_read_tv(DeserState *d) {
   else if (ttisfloat(&v))        { v.value_.n = rb_dbl(&d->rb); }
   else if (iscollectable(&v)) {
     uint32_t id = rb_u32(&d->rb);
-    /* id is attacker-controlled; bound it before indexing id_to_ptr. */
-    if (id > d->num_objects) {
-      if (!d->error) {
-        d->error = 1;
-        snprintf(d->errmsg, sizeof(d->errmsg),
-                 "object id %u out of range (num_objects=%u)",
-                 (unsigned)id, (unsigned)d->num_objects);
-      }
-      setnilvalue(&v);
-      return v;
+    GCObject *o = (GCObject *)resolve_obj_id(d, id, RESOLVE_ANY, "value");
+    /* The value tag must agree with the actual type of the referenced object
+    ** (the Pass-1 ground truth): a forged tag would otherwise make the VM read
+    ** the object as another type -- type confusion one level below the id
+    ** validation. */
+    if (o && ctb(o->tt) != tag) {
+      des_fail(d, "value tag 0x%02x does not match object id %u (type tag "
+               "0x%02x)", (unsigned)tag, (unsigned)id, (unsigned)ctb(o->tt));
+      o = NULL;
     }
-    v.value_.gc = id ? (GCObject *)d->id_to_ptr[id] : NULL;
-    if (!v.value_.gc) setnilvalue(&v);
+    v.value_.gc = o;
+    if (!o) setnilvalue(&v);
   }
   else if (!ttisnil(&v) && !ttisboolean(&v)) {
     /* Unknown tag byte (including TV_DEADKEY, which is valid only in a table
     ** node key position and is decoded by fill_table directly): a TValue with
     ** an arbitrary tag must never enter the state -- type confusion. */
-    if (!d->error) {
-      d->error = 1;
-      snprintf(d->errmsg, sizeof(d->errmsg),
-               "invalid value tag 0x%02x in stream", (unsigned)tag);
-    }
+    des_fail(d, "invalid value tag 0x%02x in stream", (unsigned)tag);
     setnilvalue(&v);
   }
   return v;
@@ -1380,12 +1393,13 @@ static void fill_proto(DeserState *d, Proto *p) {
   rb_u32(rb);
   for (int i = 0; i < p->sizep; i++) {
     uint32_t id = rb_u32(rb);
-    p->p[i] = id ? (Proto *)d->id_to_ptr[id] : NULL;
+    p->p[i] = (Proto *)resolve_obj_id(d, id, OBJ_PROTO, "nested proto");
   }
   rb_u32(rb);
   for (int i = 0; i < p->sizeupvalues; i++) {
     uint32_t nid = rb_u32(rb);
-    p->upvalues[i].name    = nid ? (TString *)d->id_to_ptr[nid] : NULL;
+    p->upvalues[i].name    = (TString *)resolve_obj_id(d, nid, OBJ_STRING,
+                                                       "upvalue name");
     p->upvalues[i].instack = rb_u8(rb);
     p->upvalues[i].idx     = rb_u8(rb);
     p->upvalues[i].kind    = rb_u8(rb);
@@ -1405,13 +1419,15 @@ static void fill_proto(DeserState *d, Proto *p) {
     p->locvars = luaM_newvector(d->L, (int)nloc, LocVar);
     for (uint32_t i = 0; i < nloc; i++) {
       uint32_t vid    = rb_u32(rb);
-      p->locvars[i].varname = vid ? (TString *)d->id_to_ptr[vid] : NULL;
+      p->locvars[i].varname = (TString *)resolve_obj_id(d, vid, OBJ_STRING,
+                                                        "local variable name");
       p->locvars[i].startpc = rb_i32(rb);
       p->locvars[i].endpc   = rb_i32(rb);
     }
   }
   srcid = rb_u32(rb);
-  p->source        = srcid ? (TString *)d->id_to_ptr[srcid] : NULL;
+  p->source        = (TString *)resolve_obj_id(d, srcid, OBJ_STRING,
+                                               "proto source");
   p->linedefined   = rb_i32(rb);
   p->lastlinedefined = rb_i32(rb);
 }
@@ -1420,11 +1436,12 @@ static void fill_lclosure(DeserState *d, LClosure *cl) {
   uint8_t nuv;
   RBuf *rb = &d->rb;
   uint32_t pid = rb_u32(rb);
-  cl->p = pid ? (Proto *)d->id_to_ptr[pid] : NULL;
+  cl->p = (Proto *)resolve_obj_id(d, pid, OBJ_PROTO, "closure proto");
   nuv = rb_u8(rb);
   for (int i = 0; i < nuv; i++) {
     uint32_t uid = rb_u32(rb);
-    cl->upvals[i] = uid ? (UpVal *)d->id_to_ptr[uid] : NULL;
+    cl->upvals[i] = (UpVal *)resolve_obj_id(d, uid, RESOLVE_UPVAL,
+                                            "closure upvalue");
   }
 }
 
@@ -1437,13 +1454,9 @@ static void fill_cclosure(DeserState *d, CClosure *cl) {
     const char *name = (const char *)(rb->data + rb->pos);
     rb->pos += nlen;
     cl->f = cfrev_lookup(&d->cfrev, name, nlen);
-    if (!cl->f && !d->error) {
-      int n;
-      d->error = 1;
-      n = nlen < 200 ? (int)nlen : 200;
-      snprintf(d->errmsg, sizeof(d->errmsg),
-               "unknown C closure '%.*s'", n, name);
-    }
+    if (!cl->f)
+      des_fail(d, "unknown C closure '%.*s'",
+               nlen < 200 ? (int)nlen : 200, name);
   }
   nuv = rb_u8(rb);
   for (int i = 0; i < (int)nuv; i++)
@@ -1453,26 +1466,6 @@ static void fill_cclosure(DeserState *d, CClosure *cl) {
 static void fill_upval_closed(DeserState *d, UpVal *uv) {
   uv->u.value = ds_read_tv(d);
   uv->v.p     = &uv->u.value;
-}
-
-/* Resolve a serialized metatable id to its Table*. The id is attacker-controlled,
-** so validate that it references an actual OBJ_TABLE before dereferencing
-** id_to_ptr: a forged or inconsistent stream could otherwise index past the
-** object table or point at a non-table, and later metamethod access would treat
-** that object as a Table -- an out-of-bounds read / type confusion. id 0 means
-** "no metatable". Returns the Table* (or NULL), latching d->error on a bad id. */
-static Table *resolve_mt_id(DeserState *d, uint32_t mt_id, const char *owner) {
-  if (mt_id == 0) return NULL;
-  if (mt_id > d->num_objects || d->obj_types[mt_id - 1] != OBJ_TABLE) {
-    if (!d->error) {
-      d->error = 1;
-      snprintf(d->errmsg, sizeof(d->errmsg),
-               "%s metatable id %u is not a valid table (num_objects=%u)",
-               owner, (unsigned)mt_id, (unsigned)d->num_objects);
-    }
-    return NULL;
-  }
-  return (Table *)d->id_to_ptr[mt_id];
 }
 
 static void fill_table(DeserState *d, Table *t) {
@@ -1523,57 +1516,31 @@ static void fill_table(DeserState *d, Table *t) {
     /* A nil-type node value must be one of the two empty variants Lua stores in
     ** nodes (LUA_VNIL / LUA_VEMPTY); any other nil variant is a forged tag. */
     if (ttisnil(&val) && val.tt_ != LUA_VNIL && val.tt_ != LUA_VEMPTY) {
-      if (!d->error) {
-        d->error = 1;
-        snprintf(d->errmsg, sizeof(d->errmsg),
-                 "corrupt table hash entry: bad empty-value tag 0x%02x"
-                 " at slot %u", (unsigned)val.tt_, (unsigned)e);
-      }
-      continue;
-    }
-    if (dead && kid > d->num_objects) {
-      if (!d->error) {
-        d->error = 1;
-        snprintf(d->errmsg, sizeof(d->errmsg),
-                 "corrupt table hash entry: dead key id %u out of range"
-                 " at slot %u (num_objects=%u)",
-                 (unsigned)kid, (unsigned)e, (unsigned)d->num_objects);
-      }
+      des_fail(d, "corrupt table hash entry: bad empty-value tag 0x%02x"
+               " at slot %u", (unsigned)val.tt_, (unsigned)e);
       continue;
     }
     if (dead && !ttisnil(&val)) {
-      if (!d->error) {
-        d->error = 1;
-        snprintf(d->errmsg, sizeof(d->errmsg),
-                 "corrupt table hash entry: dead key with non-empty value"
-                 " at slot %u", (unsigned)e);
-      }
+      des_fail(d, "corrupt table hash entry: dead key with non-empty value"
+               " at slot %u", (unsigned)e);
       continue;
     }
     if (!dead && ttisfloat(&key) && luai_numisnan(fltvalue(&key))) {
-      if (!d->error) {
-        d->error = 1;
-        snprintf(d->errmsg, sizeof(d->errmsg),
-                 "corrupt table hash entry: NaN key at slot %u", (unsigned)e);
-      }
+      des_fail(d, "corrupt table hash entry: NaN key at slot %u", (unsigned)e);
       continue;
     }
     if (nxt != 0 &&
         ((int64_t)e + (int64_t)nxt < 0 ||
          (int64_t)e + (int64_t)nxt >= (int64_t)hsize)) {
-      if (!d->error) {
-        d->error = 1;
-        snprintf(d->errmsg, sizeof(d->errmsg),
-                 "corrupt table hash entry: chain target out of range"
-                 " (slot=%u, nxt=%d, size=%u)",
-                 (unsigned)e, (int)nxt, (unsigned)hsize);
-      }
+      des_fail(d, "corrupt table hash entry: chain target out of range"
+               " (slot=%u, nxt=%d, size=%u)",
+               (unsigned)e, (int)nxt, (unsigned)hsize);
       continue;
     }
     n = gnode(t, e);
     if (dead) {
       setdeadkey(n);
-      gckey(n) = kid ? (GCObject *)d->id_to_ptr[kid] : NULL;
+      gckey(n) = (GCObject *)resolve_obj_id(d, kid, RESOLVE_ANY, "dead key");
     }
     else
       setnodekey(n, &key);
@@ -1588,7 +1555,7 @@ static void fill_table(DeserState *d, Table *t) {
     gnext(n) = nxt;
   }
   mt_id = rb_u32(rb);
-  t->metatable = resolve_mt_id(d, mt_id, "table");
+  t->metatable = (Table *)resolve_obj_id(d, mt_id, OBJ_TABLE, "table metatable");
   (void)rb_u32(rb);  /* asize (already applied in Pass 1) */
 }
 
@@ -1654,20 +1621,16 @@ static void fill_thread(DeserState *d, lua_State *th, int is_main) {
       nextra = rb_i32(rb);
     } else {
       uint8_t has_kont;
-      if (!rb_ok(rb, 1)) { d->error = 1; break; }
+      if (!rb_ok(rb, 1)) { des_fail(d, "truncated CallInfo record"); break; }
       has_kont = rb_u8(rb);
       if (has_kont) {
         uint16_t knlen;
         const char *kname;
-        if (!rb_ok(rb, 2)) { d->error = 1; break; }
+        if (!rb_ok(rb, 2)) { des_fail(d, "truncated CallInfo record"); break; }
         knlen = rb_u16(rb);
         /* knlen name bytes + ctx(u64) + old_errfunc(u64) */
         if (!rb_ok(rb, (size_t)knlen + 16)) {
-          if (!d->error) {
-            d->error = 1;
-            snprintf(d->errmsg, sizeof(d->errmsg),
-                     "truncated C continuation record");
-          }
+          des_fail(d, "truncated C continuation record");
           break;
         }
         kname = (const char *)(rb->data + rb->pos);
@@ -1675,12 +1638,9 @@ static void fill_thread(DeserState *d, lua_State *th, int is_main) {
         kfn   = kont_by_name(kname, knlen);
         kctx  = (int64_t)rb_u64(rb);
         kerrf = (int64_t)rb_u64(rb);
-        if (!kfn && !d->error) {
-          int n = knlen < 200 ? (int)knlen : 200;
-          d->error = 1;
-          snprintf(d->errmsg, sizeof(d->errmsg),
-                   "unknown C continuation '%.*s'", n, kname);
-        }
+        if (!kfn)
+          des_fail(d, "unknown C continuation '%.*s'",
+                   knlen < 200 ? (int)knlen : 200, kname);
       }
     }
 
@@ -1693,7 +1653,8 @@ static void fill_thread(DeserState *d, lua_State *th, int is_main) {
     cur->u2.funcidx = u2v;
 
     if (is_lua) {
-      Proto *proto = pid ? (Proto *)d->id_to_ptr[pid] : NULL;
+      Proto *proto = (Proto *)resolve_obj_id(d, pid, OBJ_PROTO,
+                                             "CallInfo proto");
       cur->u.l.savedpc    = proto ? proto->code + pc_off : NULL;
       cur->u.l.nextraargs = nextra;
       cur->u.l.trap       = 0;
@@ -1718,7 +1679,8 @@ static void fill_thread(DeserState *d, lua_State *th, int is_main) {
     UpVal **pp;
     uint32_t uid   = rb_u32(rb);
     int32_t  soff  = rb_i32(rb);
-    UpVal *uv      = (UpVal *)d->id_to_ptr[uid];
+    UpVal *uv      = (UpVal *)resolve_obj_id(d, uid, OBJ_UPVAL_OPEN,
+                                             "open upvalue");
     if (!uv) continue;
     uv->v.p = s2v(th->stack.p + soff);
     pp = &th->openupval;
@@ -1747,33 +1709,26 @@ static void fill_userdata(DeserState *d, Udata *u) {
   RBuf *rb = &d->rb;
   uint32_t plen;
   uint32_t mt_id;
-  if (!rb_ok(rb, 4)) { d->error = 1; return; }
+  if (!rb_ok(rb, 4)) { des_fail(d, "truncated userdata record"); return; }
   plen = rb_u32(rb);
   if (!rb_room(rb, plen, 4)) {  /* payload + mt_id (overflow-safe) */
-    if (!d->error) {
-      d->error = 1;
-      snprintf(d->errmsg, sizeof(d->errmsg),
-               "truncated userdata payload (len=%u)", (unsigned)plen);
-    }
+    des_fail(d, "truncated userdata payload (len=%u)", (unsigned)plen);
     return;
   }
   /* u was allocated in Pass 1 with this exact length (same recorded field), so
   ** they must match for a well-formed buffer; a mismatch means a corrupt or
   ** forged stream — fail rather than copy a wrong-sized blob. */
   if ((size_t)plen != u->len) {
-    if (!d->error) {
-      d->error = 1;
-      snprintf(d->errmsg, sizeof(d->errmsg),
-               "userdata payload length mismatch (record=%u, object=%zu)",
-               (unsigned)plen, u->len);
-    }
+    des_fail(d, "userdata payload length mismatch (record=%u, object=%zu)",
+             (unsigned)plen, u->len);
     return;
   }
   if (plen > 0)
     memcpy(getudatamem(u), rb->data + rb->pos, plen);
   rb->pos += plen;
   mt_id = rb_u32(rb);
-  u->metatable = resolve_mt_id(d, mt_id, "userdata");
+  u->metatable = (Table *)resolve_obj_id(d, mt_id, OBJ_TABLE,
+                                         "userdata metatable");
 }
 
 /* -----------------------------------------------------------------------
@@ -2104,11 +2059,25 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
     }
   }
 
-  /* Swap in the restored registry and type metatables */
-  if (registry_id)
-    sethvalue(L, &G(L)->l_registry, (Table *)d.id_to_ptr[registry_id]);
-  for (int i = 0; i < LUA_NUMTYPES; i++)
-    G(L)->mt[i] = mt_ids[i] ? (Table *)d.id_to_ptr[mt_ids[i]] : NULL;
+  /* Swap in the restored registry and type metatables. Resolve every root
+  ** before installing any: on a forged id the state must stay closeable with
+  ** its fresh registry intact, so bail before the first assignment. */
+  {
+    Table *mts[LUA_NUMTYPES];
+    Table *reg = (Table *)resolve_obj_id(&d, registry_id, OBJ_TABLE,
+                                         "registry");
+    for (int i = 0; i < LUA_NUMTYPES; i++)
+      mts[i] = (Table *)resolve_obj_id(&d, mt_ids[i], OBJ_TABLE,
+                                       "type metatable");
+    if (d.error) {
+      fprintf(stderr, "lstasis_load: %s\n", d.errmsg);
+      goto fail_L;
+    }
+    if (reg)
+      sethvalue(L, &G(L)->l_registry, reg);
+    for (int i = 0; i < LUA_NUMTYPES; i++)
+      G(L)->mt[i] = mts[i];
+  }
 
 #if LUASTASIS_DETERMINISTIC
   /* Resume the allocation counter where the saved state left off, so
