@@ -42,11 +42,23 @@
 **   All others        → no extra bytes.
 ** ----------------------------------------------------------------------- */
 #define TV_NIL    0x00   /* makevariant(LUA_TNIL,     0)              */
+#define TV_EMPTY  0x10   /* makevariant(LUA_TNIL,     1) — LUA_VEMPTY,
+                            the absent-value marker inside table nodes;
+                            appears only as a dead-key slot's value     */
 #define TV_FALSE  0x01   /* makevariant(LUA_TBOOLEAN, 0)              */
 #define TV_TRUE   0x11   /* makevariant(LUA_TBOOLEAN, 1)              */
 #define TV_INT    0x03   /* makevariant(LUA_TNUMBER,  0) — integer    */
 #define TV_FLOAT  0x13   /* makevariant(LUA_TNUMBER,  1) — float      */
 #define BIT_COLL  0x40   /* BIT_ISCOLLECTABLE — GC ref if set         */
+
+/* GC-cleared dead table key (LUA_TDEADKEY = LUA_NUMTYPES+2 = 11; no BIT_COLL).
+** Appears only in the key position of a table hash-slot record; a uint32_t
+** object id follows (0 when the key object is not in the snapshot — nothing
+** reachable can name such a key, so its pointer identity is unobservable). The
+** slot's value and gnext follow as for a live entry. Dead keys round-trip so
+** that node layout, collision chains, and 'next' traversal continuation match
+** the source state exactly. */
+#define TV_DEADKEY 0x0B
 
 /* -------------------------------------------------------------------------
 ** Proto flag bits as serialized (Lua 5.5, lobject.h).

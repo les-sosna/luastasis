@@ -8,9 +8,12 @@
 **           C functions (LCF and C closures) via a name registry,
 **           full userdata that opts in via a truthy __persist metatable field
 **           (serialized self-contained: raw payload bytes + its metatable).
-** Not supported: light userdata; full userdata without a __persist metatable
-**                field (serialized as nil, exactly as before); persistable
-**                userdata carrying Lua user values (nuvalue > 0) — hard error.
+** Rejected (a hard save error): light userdata; full
+**                userdata without a truthy __persist metatable field; persistable
+**                userdata carrying Lua user values (nuvalue > 0). The standard io
+**                library is therefore unsupported for save/load — its FILE*
+**                handles are non-__persist userdata. (The math PRNG state opts in
+**                via __persist and is supported.)
 */
 
 #ifndef lstasis_h
@@ -58,10 +61,12 @@ const lstasis_Kont *lstasis_builtin_konts(void);
 ** metatable is reattached by object id on load. The metatable round-trips in
 ** full, so its metamethods work after load: dispatch (__index, __eq, ...) is
 ** restored and a __gc finalizer is re-registered, so it runs when the loaded
-** object is collected. Full userdata without '__persist' is serialized as nil
-** (the historical behavior). A persistable userdata that carries Lua user
-** values (nuvalue > 0) is a hard save error for now (typical persistable
-** handles have nuvalue 0); so is a payload of 2^32 bytes or more.
+** object is collected. Full userdata without '__persist', and light userdata,
+** are a hard save error: a serialized state contains only fully reconstructible
+** values, never a placeholder for one that could not be saved. A persistable
+** userdata that carries Lua user values (nuvalue > 0) is also a hard save error
+** for now (typical persistable handles have nuvalue 0); so is a payload of 2^32
+** bytes or more.
 **
 ** On success, *out_buf points to the buffer (caller must free) and
 ** *out_size holds its length.  Returns 0 on success, -1 on error.

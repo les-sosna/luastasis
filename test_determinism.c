@@ -46,7 +46,8 @@
 
 static lua_State *new_state(void) {
   lua_State *L = luaL_newstate();
-  if (L) luaL_openlibs(L);
+  /* io is unsupported for save/load (non-__persist FILE* userdata); exclude it. */
+  if (L) luaL_openselectedlibs(L, ~LUA_IOLIBK, 0);
   return L;
 }
 
