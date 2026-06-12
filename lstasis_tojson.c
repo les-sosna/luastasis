@@ -130,6 +130,11 @@ static void jtv(RBuf *rb) {
   } else if (tag == TV_NIL) {
     fputs("null", g_out);
 
+  } else if (tag == TV_EMPTY) {
+    /* LUA_VEMPTY: a table node's absent-value marker (dead-key slots).
+    ** Distinct from strict nil on the wire, so render it distinctly. */
+    fputs("{\"empty\":true}", g_out);
+
   } else if (tag == TV_FALSE) {
     fputs("{\"bool\":false}", g_out);
 
@@ -193,19 +198,31 @@ static void dump_table(RBuf *rb) {
   fprintf(g_out, ", \"hsize\":%u, \"hash\":[", hsize);
   g_depth++;
   for (i = 0; i < hsize; i++) {
-    size_t before;
+    int ktag;
     int32_t nxt;
     if (i > 0) fputc(',', g_out);
     jsonnl();
-    before = rb->pos;
+    /* peek the key tag; -1 on a truncated buffer routes to jtv, which
+    ** reports the error */
+    ktag = (rb->pos < rb->size) ? rb->data[rb->pos] : -1;
     fprintf(g_out, "{\"idx\":%u", i);
-    if (rb->pos < rb->size && rb->data[before] == TV_NIL) {
+    if (ktag == TV_NIL) {
       rb_u8(rb);  /* consume the empty-slot marker */
       fputs(", \"empty\":true}", g_out);
       continue;
     }
-    fputs(", \"key\":", g_out);
-    jtv(rb);
+    if (ktag == TV_DEADKEY) {
+      /* GC-cleared dead key: tag byte + key object id (0 = anonymous),
+      ** then value and next as for a live entry. */
+      uint32_t kid;
+      rb_u8(rb);
+      kid = rb_u32(rb);
+      if (kid) fprintf(g_out, ", \"deadkey\":{\"ref\":%u}", kid);
+      else     fputs(", \"deadkey\":null", g_out);
+    } else {
+      fputs(", \"key\":", g_out);
+      jtv(rb);
+    }
     fputs(", \"val\":", g_out);
     jtv(rb);
     nxt = rb_i32(rb);

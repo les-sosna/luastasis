@@ -662,6 +662,16 @@ static const luaL_Reg randfuncs[] = {
 */
 static void setrandfunc (lua_State *L) {
   RanState *state = (RanState *)lua_newuserdatauv(L, sizeof(RanState), 0);
+  /* Opt the PRNG state into luastasis serialization via a truthy __persist
+  ** metatable field. RanState is plain-copyable POD (just Rand64 s[4], i.e.
+  ** integers), so its raw bytes round-trip faithfully and the random sequence
+  ** survives save/load; without this opt-in the serializer rejects it as a
+  ** non-__persist userdata. Harmless outside luastasis: the metatable carries
+  ** only the opt-in flag and defines no metamethods (in particular no __gc). */
+  lua_createtable(L, 0, 1);
+  lua_pushboolean(L, 1);
+  lua_setfield(L, -2, "__persist");
+  lua_setmetatable(L, -2);
 #if LUASTASIS_DETERMINISTIC
   /* Seed the PRNG from the state's hash seed — explicit and reproducible.
   ** Caller can override at any time via math.randomseed. */

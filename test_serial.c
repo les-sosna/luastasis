@@ -24,7 +24,6 @@ static const lstasis_Lib std_libs[] = {
   {"table",     luaopen_table},
   {"string",    luaopen_string},
   {"math",      luaopen_math},
-  {"io",        luaopen_io},
   {"os",        luaopen_os},
   {"utf8",      luaopen_utf8},
   {"debug",     luaopen_debug},
@@ -37,7 +36,9 @@ static const lstasis_Lib std_libs[] = {
 
 static lua_State *new_state(void) {
   lua_State *L = luaL_newstate();
-  luaL_openlibs(L);
+  /* io is unsupported for save/load: its FILE* handles are non-__persist
+  ** userdata, which the serializer rejects. Open every standard lib except io. */
+  luaL_openselectedlibs(L, ~LUA_IOLIBK, 0);
   return L;
 }
 
@@ -1037,6 +1038,37 @@ static int global_ud_int(lua_State *L, const char *name, int *out) {
   return ok;
 }
 
+/* The math PRNG state is a plain-copyable POD userdata opted into serialization
+** via a __persist metatable, so the random sequence survives save/load: the
+** loaded state continues the exact sequence the original would have. */
+static void test_math_random_state_preserved(void) {
+  lua_State *L;
+  lua_State *L2;
+  lua_Integer x_orig, x_load;
+  printf("== test_math_random_state_preserved ==\n");
+  L = new_state();  /* includes math (only io is unsupported) */
+  if (run(L, "math.randomseed(777); for i=1,5 do math.random() end") != LUA_OK) {
+    FAIL("setup", "%s", lua_tostring(L, -1)); lua_close(L); return;
+  }
+
+  /* Save does not consume RNG state, so L (post-save) and L2 (loaded) start from
+  ** the same PRNG state; their next draws must match. */
+  L2 = save_reload(L, NULL, std_libs);
+  if (!L2) { FAIL("reload", "load returned NULL"); lua_close(L); return; }
+
+  if (run(L, "rv = math.random(1, 1000000000)") != LUA_OK ||
+      run(L2, "rv = math.random(1, 1000000000)") != LUA_OK) {
+    FAIL("draw", "math.random failed"); lua_close(L); lua_close(L2); return;
+  }
+  lua_getglobal(L, "rv");  x_orig = lua_tointeger(L, -1);  lua_pop(L, 1);
+  lua_getglobal(L2, "rv"); x_load = lua_tointeger(L2, -1); lua_pop(L2, 1);
+  CHECK(x_orig == x_load,
+        "math.random sequence continues identically after load",
+        "orig=%lld load=%lld", (long long)x_orig, (long long)x_load);
+  lua_close(L);
+  lua_close(L2);
+}
+
 static void test_userdata(void) {
   lua_State *L;
   lua_State *L2;
@@ -1082,11 +1114,13 @@ static void test_userdata(void) {
   lua_close(L2);
 }
 
-/* A full userdata WITHOUT __persist must still serialize as nil (historical
-** behavior). */
+/* A full userdata WITHOUT __persist is non-serializable, so the save is rejected.
+** Callers opt userdata in via a truthy __persist metatable field. */
 static void test_userdata_non_persistable(void) {
   lua_State *L;
-  lua_State *L2;
+  unsigned char *buf = NULL;
+  size_t sz = 0;
+  int rc;
   printf("== test_userdata_non_persistable ==\n");
   L = new_state();
 
@@ -1094,15 +1128,30 @@ static void test_userdata_non_persistable(void) {
   lua_newuserdatauv(L, sizeof(int), 0);
   lua_setglobal(L, "plain_ud");
 
-  L2 = save_reload(L, NULL, std_libs);
+  rc = lstasis_save(L, std_libs, &buf, &sz);
+  CHECK(rc != 0, "non-persistable userdata is rejected at save",
+        "rc=%d (expected nonzero)", rc);
+  free(buf);
   lua_close(L);
-  if (!L2) { FAIL("reload", "load returned NULL"); return; }
+}
 
-  lua_getglobal(L2, "plain_ud");
-  CHECK(lua_type(L2, -1) == LUA_TNIL,
-        "non-persistable userdata becomes nil", "type=%d", lua_type(L2, -1));
-  lua_pop(L2, 1);
-  lua_close(L2);
+/* Light userdata is a raw C pointer with no serializable identity: rejected. */
+static void test_light_userdata_rejected(void) {
+  lua_State *L;
+  unsigned char *buf = NULL;
+  size_t sz = 0;
+  int rc;
+  printf("== test_light_userdata_rejected ==\n");
+  L = new_state();
+
+  lua_pushlightuserdata(L, (void *)L);
+  lua_setglobal(L, "lud");
+
+  rc = lstasis_save(L, std_libs, &buf, &sz);
+  CHECK(rc != 0, "light userdata is rejected at save",
+        "rc=%d (expected nonzero)", rc);
+  free(buf);
+  lua_close(L);
 }
 
 /* A persistable userdata carrying Lua user values (nuvalue > 0) is rejected
@@ -1136,56 +1185,107 @@ static void test_userdata_uservalue_rejected(void) {
   lua_close(L);
 }
 
-/* save -> load -> save must be byte-identical with a persistable userdata in
-** the state (the determinism requirement, exercised with userdata).
-**
-** This builds a base-library-only state on purpose: the io library's standard
-** file handles (io.stdin/stdout/stderr) are NON-persistable userdata that
-** serialize to nil, and on reload fill_table drops those nil-valued slots,
-** unanchoring their key strings so the post-load GC sweeps them — making a
-** second save a few strings shorter. That pre-existing nil-drop effect is
-** unrelated to __persist userdata; excluding io isolates this test to the
-** feature under test. */
+/* Minimal base-library-only states for the byte-stability and dead-key tests:
+** the smallest snapshot that exercises the feature under test. */
 static const lstasis_Lib base_libs[] = {
   {"base", luaopen_base},
   {NULL, NULL}
 };
+
+static lua_State *new_base_state(void) {
+  lua_State *L = luaL_newstate();
+  luaL_requiref(L, LUA_GNAME, luaopen_base, 1);
+  lua_pop(L, 1);
+  return L;
+}
+
+/* Save L (a base_libs state), load the snapshot back, and close L. In
+** deterministic mode also check that an immediate re-save of the loaded state
+** reproduces the exact same bytes, reported under check_name. Returns the
+** loaded state (caller closes) or NULL after a FAIL. */
+static lua_State *reload_check_bytes(lua_State *L, const char *check_name) {
+  size_t n1 = 0;
+  unsigned char *s1 = NULL;
+  lua_State *L2;
+  if (lstasis_save(L, base_libs, &s1, &n1) != 0) {
+    FAIL("save1", "first save failed"); lua_close(L); return NULL;
+  }
+  L2 = lstasis_load(s1, n1, base_libs);
+  lua_close(L);
+  if (!L2) { FAIL("reload", "load returned NULL"); free(s1); return NULL; }
+#if LUASTASIS_DETERMINISTIC
+  {
+    size_t n2 = 0;
+    unsigned char *s2 = NULL;
+    if (lstasis_save(L2, base_libs, &s2, &n2) != 0) {
+      FAIL("save2", "second save failed"); free(s1); lua_close(L2); return NULL;
+    }
+    CHECK((n1 == n2) && (memcmp(s1, s2, n1) == 0), check_name,
+          "n1=%zu n2=%zu", n1, n2);
+    free(s2);
+  }
+#else
+  (void)check_name;
+#endif
+  free(s1);
+  return L2;
+}
 
 /* Gated to deterministic mode: byte-identical re-serialization is only a
 ** LUASTASIS_DETERMINISTIC guarantee. In vanilla mode objects hash by address,
 ** so two distinct states may lay their tables out differently and re-save to
 ** different bytes (observable e.g. under ASAN, which shifts allocations). */
 #if LUASTASIS_DETERMINISTIC
+/* save -> load -> save must be byte-identical with a persistable userdata in
+** the state (the determinism requirement, exercised with userdata). */
 static void test_userdata_byte_stable(void) {
-  size_t n1, n2;
-  unsigned char *s1, *s2;
   lua_State *L;
   lua_State *L2;
-  int ok;
   printf("== test_userdata_byte_stable ==\n");
-  L = luaL_newstate();
-  luaL_requiref(L, LUA_GNAME, luaopen_base, 1);
-  lua_pop(L, 1);
+  L = new_base_state();
   make_persistable_ud(L, 0x1234);
   lua_pushvalue(L, -1); lua_setglobal(L, "ud_a");
   lua_setglobal(L, "ud_b");  /* same object in two globals */
 
-  s1 = NULL; n1 = 0;
-  if (lstasis_save(L, base_libs, &s1, &n1) != 0) {
-    FAIL("save1", "first save failed"); lua_close(L); return;
-  }
-  L2 = lstasis_load(s1, n1, base_libs);
-  lua_close(L);
-  if (!L2) { FAIL("reload", "load returned NULL"); free(s1); return; }
+  L2 = reload_check_bytes(L, "save->load->save byte-identical with userdata");
+  if (!L2) return;
+  lua_close(L2);
+}
 
-  s2 = NULL; n2 = 0;
-  if (lstasis_save(L2, base_libs, &s2, &n2) != 0) {
-    FAIL("save2", "second save failed"); free(s1); lua_close(L2); return;
+/* A dead-key node -- a hash slot whose key is still present but whose value was
+** set to nil before any rehash -- must round-trip byte-identically. The node is
+** semantically absent (pairs skips it, t[k] is nil) but serialized verbatim:
+** key, empty value, and gnext, with the key string a discovered object record
+** referenced by the node. Load does not run a collection, so the restored node
+** is bit-equivalent to the source and an immediate re-save reproduces the same
+** bytes. Insert "dead" then nil it: the raw nil assignment clears the node's
+** value without rehashing, leaving exactly that dead-key node. base-only state
+** for the same isolation reason as test_userdata_byte_stable; gated to
+** deterministic mode because byte-identical re-save is only a
+** LUASTASIS_DETERMINISTIC guarantee. */
+static void test_deadkey_byte_stable(void) {
+  lua_State *L;
+  lua_State *L2;
+  printf("== test_deadkey_byte_stable ==\n");
+  L = new_base_state();
+  if (run(L, "t = {}; t.live = 1; t.dead = 2; t.dead = nil") != LUA_OK) {
+    FAIL("setup", "%s", lua_tostring(L, -1)); lua_close(L); return;
   }
-  ok = (n1 == n2) && (memcmp(s1, s2, n1) == 0);
-  CHECK(ok, "save->load->save byte-identical with userdata",
-        "n1=%zu n2=%zu", n1, n2);
-  free(s1); free(s2);
+
+  L2 = reload_check_bytes(L,
+                          "save->load->save byte-identical with a dead-key node");
+  if (!L2) return;
+
+  /* The live key survives and the dead key stays absent (not resurrected). */
+  lua_getglobal(L2, "t");
+  lua_getfield(L2, -1, "live");
+  CHECK(lua_tointeger(L2, -1) == 1, "live key intact after load",
+        "got %s", lua_isnil(L2, -1) ? "nil" : lua_tostring(L2, -1));
+  lua_pop(L2, 1);
+  lua_getfield(L2, -1, "dead");
+  CHECK(lua_isnil(L2, -1), "dead key absent after load",
+        "type=%s", lua_typename(L2, lua_type(L2, -1)));
+  lua_pop(L2, 2);  /* value + table */
   lua_close(L2);
 }
 #endif /* LUASTASIS_DETERMINISTIC */
@@ -1201,9 +1301,7 @@ static void test_userdata_gc_finalizer(void) {
   lua_State *L2;
   int ran;
   printf("== test_userdata_gc_finalizer ==\n");
-  L = luaL_newstate();
-  luaL_requiref(L, LUA_GNAME, luaopen_base, 1);
-  lua_pop(L, 1);
+  L = new_base_state();
 
   /* metatable: __persist=true, __gc = function() gc_ran = (gc_ran or 0) + 1 end */
   luaL_newmetatable(L, "gc.ud");
@@ -1243,9 +1341,7 @@ static void test_loaded_metatable_index(void) {
   lua_State *L2;
   const char *res;
   printf("== test_loaded_metatable_index ==\n");
-  L = luaL_newstate();
-  luaL_requiref(L, LUA_GNAME, luaopen_base, 1);
-  lua_pop(L, 1);
+  L = new_base_state();
   if (run(L, "t = setmetatable({}, "
               "{ __index = function(_, k) return 'IDX:' .. k end })") != LUA_OK) {
     FAIL("setup", "%s", lua_tostring(L, -1)); lua_close(L); return;
@@ -1262,6 +1358,161 @@ static void test_loaded_metatable_index(void) {
   res = lua_tostring(L2, -1);
   CHECK(res != NULL && strcmp(res, "IDX:missing") == 0,
         "loaded metatable still dispatches __index", "got %s", res ? res : "(nil)");
+  lua_pop(L2, 1);
+  lua_close(L2);
+}
+
+/* A dead key (t[k]=nil) in the MIDDLE of a collision chain must not orphan the
+** live entry chained after it. The serializer keeps the node verbatim -- key,
+** empty value, gnext -- so the chain walks through it on the loaded state
+** exactly as on the source (Lua's lookup stops only at gnext 0). Construction is
+** seed-independent (integer keys hash via i%((size-1)|1), no string seed): hash
+** size 8 -> main position = key % 7, so keys 7, 21, 14 all collide on slot 0.
+** Inserting 14 LAST puts it mid-chain (luaH_newkey links each new collider right
+** after the head): node0 key=7 -> node6 key=14 -> node7 key=21. Nilling t[14]
+** leaves a dead key mid-chain; the restored chain still reaches t[21] through
+** it, while t[14] itself reads as absent. Re-saving immediately is
+** byte-identical (checked in deterministic mode). */
+static void test_deadkey_midchain_keeps_successor(void) {
+  lua_State *L;
+  lua_State *L2;
+  printf("== test_deadkey_midchain_keeps_successor ==\n");
+  L = new_base_state();
+
+  lua_createtable(L, 0, 8);                    /* hash size 8 -> mainpos = i % 7 */
+  lua_pushinteger(L, 1); lua_seti(L, -2, 7);   /* chain head (slot 0)             */
+  lua_pushinteger(L, 2); lua_seti(L, -2, 21);  /* collides -> after the head       */
+  lua_pushinteger(L, 3); lua_seti(L, -2, 14);  /* collides, inserted last -> mid-chain */
+  lua_pushnil(L);        lua_seti(L, -2, 14);  /* t[14] = nil -> dead key mid-chain    */
+  lua_setglobal(L, "t");
+
+  L2 = reload_check_bytes(L, "mid-chain dead key is byte-identical on re-save");
+  if (!L2) return;
+
+  lua_getglobal(L2, "t");
+  lua_geti(L2, -1, 7);
+  CHECK(lua_tointeger(L2, -1) == 1, "t[7] (chain head) intact after load",
+        "got %s", lua_isnil(L2, -1) ? "nil" : lua_tostring(L2, -1));
+  lua_pop(L2, 1);
+  lua_geti(L2, -1, 21);
+  CHECK(lua_tointeger(L2, -1) == 2,
+        "t[21] (live successor of mid-chain dead key) intact after load",
+        "got %s (expected 2; live successor unreachable)",
+        lua_isnil(L2, -1) ? "nil" : lua_tostring(L2, -1));
+  lua_pop(L2, 1);
+  lua_geti(L2, -1, 14);
+  CHECK(lua_isnil(L2, -1), "t[14] (dead key) absent after load",
+        "type=%s", lua_typename(L2, lua_type(L2, -1)));
+  lua_pop(L2, 2);  /* value + table */
+  lua_close(L2);
+}
+
+/* A dead key at a chain HEAD (a node at its own main position) with a live key
+** colliding behind it. Lookups for the colliding key enter the table at the
+** head's slot, so the head node -- dead or not -- must survive the round-trip
+** with its gnext intact for the live key to stay reachable. Same
+** seed-independent setup, but key 7 is inserted FIRST as the chain head, key 14
+** collides behind it, then t[7] is nilled to leave a dead-key head. */
+static void test_deadkey_chainhead_roundtrips(void) {
+  lua_State *L;
+  lua_State *L2;
+  printf("== test_deadkey_chainhead_roundtrips ==\n");
+  L = new_base_state();
+
+  lua_createtable(L, 0, 8);                    /* hash size 8 -> mainpos = i % 7 */
+  lua_pushinteger(L, 1); lua_seti(L, -2, 7);   /* chain head (inserted first)     */
+  lua_pushinteger(L, 2); lua_seti(L, -2, 14);  /* collides behind the head         */
+  lua_pushnil(L);        lua_seti(L, -2, 7);   /* t[7] = nil -> dead-key head       */
+  lua_setglobal(L, "t");
+
+  L2 = save_reload(L, NULL, base_libs);
+  lua_close(L);
+  if (!L2) { FAIL("reload", "load returned NULL"); return; }
+
+  lua_getglobal(L2, "t");
+  lua_geti(L2, -1, 14);
+  CHECK(lua_tointeger(L2, -1) == 2,
+        "t[14] (live key behind a dead-key chain head) intact after load",
+        "got %s (expected 2; colliding key unreachable)",
+        lua_isnil(L2, -1) ? "nil" : lua_tostring(L2, -1));
+  lua_pop(L2, 1);
+  lua_geti(L2, -1, 7);
+  CHECK(lua_isnil(L2, -1), "t[7] (dead-key head) absent after load",
+        "type=%s", lua_typename(L2, lua_type(L2, -1)));
+  lua_pop(L2, 2);  /* value + table */
+  lua_close(L2);
+}
+
+/* A table key with a __gc metamethod whose entry was niled before save: the key
+** object is garbage held only by the dead-key node, so the source state's next
+** collection would clear the node and fire the finalizer. The key object rides
+** along in the snapshot (the dead node references it), load runs no collection,
+** and the loaded state's first collection fires the finalizer -- the same
+** observable effect at the same point as in the source state. GC is stopped in
+** the source state so the finalizer demonstrably runs on the LOADED side. */
+static void test_deadkey_gc_parity(void) {
+  lua_State *L;
+  lua_State *L2;
+  printf("== test_deadkey_gc_parity ==\n");
+  L = new_base_state();
+  lua_gc(L, LUA_GCSTOP, 0);  /* keep the dead key un-cleared until save */
+
+  if (run(L, "local key = setmetatable({}, "
+             "  { __gc = function() gcfired = (gcfired or 0) + 1 end })\n"
+             "t = {}; t[key] = 1; t[key] = nil; key = nil") != LUA_OK) {
+    FAIL("setup", "%s", lua_tostring(L, -1)); lua_close(L); return;
+  }
+
+  L2 = save_reload(L, NULL, base_libs);
+  lua_close(L);
+  if (!L2) { FAIL("reload", "load returned NULL"); return; }
+
+  /* Stop the GC while probing: the probe itself allocates (string interning)
+  ** and load leaves a large allocation debt, so an unstopped GC could collect
+  ** during the probe -- which is the event the second half waits for. */
+  lua_gc(L2, LUA_GCSTOP, 0);
+  lua_getglobal(L2, "gcfired");
+  CHECK(lua_isnil(L2, -1), "finalizer has not fired right after load",
+        "gcfired=%s", lua_tostring(L2, -1));
+  lua_pop(L2, 1);
+  lua_gc(L2, LUA_GCRESTART, 0);
+
+  lua_gc(L2, LUA_GCCOLLECT, 0);
+  lua_gc(L2, LUA_GCCOLLECT, 0);  /* finalizers run as pending; settle */
+  lua_getglobal(L2, "gcfired");
+  CHECK(lua_isinteger(L2, -1) && lua_tointeger(L2, -1) == 1,
+        "dead key's __gc fires on the loaded state's first collection",
+        "gcfired=%s", lua_isnil(L2, -1) ? "nil" : lua_tostring(L2, -1));
+  lua_pop(L2, 1);
+  lua_close(L2);
+}
+
+/* 'next(t, k)' must continue traversal after load when k was removed just
+** before save: Lua keeps the dead-key node so a traversal suspended across the
+** removal can find its position again, and the node round-trips with the
+** snapshot. The key is held in a global, so the restored node's key is the
+** restored string and next() matches it by ordinary key equality. */
+static void test_deadkey_next_continuation(void) {
+  lua_State *L;
+  lua_State *L2;
+  printf("== test_deadkey_next_continuation ==\n");
+  L = new_base_state();
+
+  if (run(L, "k = 'removed'; t = {}; t[k] = 1; t.live = 2; t[k] = nil") != LUA_OK) {
+    FAIL("setup", "%s", lua_tostring(L, -1)); lua_close(L); return;
+  }
+
+  L2 = save_reload(L, NULL, base_libs);
+  lua_close(L);
+  if (!L2) { FAIL("reload", "load returned NULL"); return; }
+
+  if (run(L2, "ok = pcall(next, t, k)") != LUA_OK) {
+    FAIL("next", "%s", lua_tostring(L2, -1)); lua_close(L2); return;
+  }
+  lua_getglobal(L2, "ok");
+  CHECK(lua_toboolean(L2, -1),
+        "next(t, k) continues from a removed key after load",
+        "pcall(next, t, k) failed: dead-key node missing from loaded table");
   lua_pop(L2, 1);
   lua_close(L2);
 }
@@ -1289,13 +1540,20 @@ int main(void) {
   test_cfunc();
   test_vararg();
   test_save_preserves_state();
+  test_math_random_state_preserved();
   test_userdata();
   test_userdata_non_persistable();
+  test_light_userdata_rejected();
   test_userdata_uservalue_rejected();
   test_userdata_gc_finalizer();
   test_loaded_metatable_index();
+  test_deadkey_midchain_keeps_successor();
+  test_deadkey_chainhead_roundtrips();
+  test_deadkey_gc_parity();
+  test_deadkey_next_continuation();
 #if LUASTASIS_DETERMINISTIC
   test_userdata_byte_stable();
+  test_deadkey_byte_stable();
 #endif
   printf("=== Done ===\n");
   return 0;
