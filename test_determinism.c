@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/wait.h>
 
 #include "lua.h"
 #include "lualib.h"
@@ -40,14 +41,22 @@
 #define LUASTASIS_DETERMINISTIC 0
 #endif
 
+/* Total failed checks; main() exits nonzero if any.  Unexpected Lua errors
+** (in-process eval or ./lua subprocess) count as failures too: the output
+** comparison cannot tell two identical error messages from two identical
+** valid outputs, so an erroring snippet could otherwise satisfy a
+** "must be identical" expectation. */
+static int g_failures = 0;
+
 /* ----------------------------------------------------------------------
 ** Lua state helpers (coexisting states)
 ** -------------------------------------------------------------------- */
 
 static lua_State *new_state(void) {
   lua_State *L = luaL_newstate();
-  /* io is unsupported for save/load (non-__persist FILE* userdata); exclude it. */
-  if (L) luaL_openselectedlibs(L, ~LUA_IOLIBK, 0);
+  /* This suite never serializes (no lstasis save/load), so open every standard
+  ** library -- the userdata non-determinism check needs io.tmpfile(). */
+  if (L) luaL_openlibs(L);
   return L;
 }
 
@@ -55,7 +64,8 @@ static char *eval(lua_State *L, const char *code) {
   const char *s;
   char *r;
   if (luaL_dostring(L, code) != LUA_OK) {
-    fprintf(stderr, "lua error: %s\n", lua_tostring(L, -1));
+    printf("    FAIL: unexpected lua error: %s\n", lua_tostring(L, -1));
+    g_failures++;
     lua_pop(L, 1);
     return NULL;
   }
@@ -85,19 +95,30 @@ static char *run_subproc(const char *lua_code) {
   FILE *p;
   size_t cap = 1024, len = 0;
   char *out;
-  int c;
+  int c, status;
   snprintf(cmd, sizeof(cmd), "./lua -e '%s' 2>&1", lua_code);
   p = popen(cmd, "r");
-  if (!p) return NULL;
+  if (!p) {
+    printf("    FAIL: popen(./lua) failed\n");
+    g_failures++;
+    return NULL;
+  }
   out = (char *)malloc(cap);
   out[0] = '\0';
   while ((c = fgetc(p)) != EOF) {
     if (len + 1 >= cap) { cap *= 2; out = (char *)realloc(out, cap); }
     out[len++] = (char)c;
   }
-  pclose(p);
+  status = pclose(p);
   while (len > 0 && (out[len - 1] == '\n' || out[len - 1] == '\r')) len--;
   out[len] = '\0';
+  /* A Lua error in the snippet makes ./lua exit nonzero; the message itself
+  ** is captured into `out` via 2>&1 and would compare like any other text. */
+  if (status == -1 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+    printf("    FAIL: lua subprocess exited abnormally (status 0x%x): %s\n",
+           (unsigned)status, out);
+    g_failures++;
+  }
   return out;
 }
 
@@ -139,9 +160,11 @@ static void report(const char *name, category_t cat, int observed_differ) {
   printf("  %s: %s [%s, %s mode → outputs should %s]\n",
          ok ? "PASS" : "FAIL", name, cat_label(cat), mode_label(),
          want_differ ? "differ" : "be identical");
-  if (!ok)
+  if (!ok) {
     printf("    (got: outputs %s)\n",
            observed_differ ? "differ" : "are identical");
+    g_failures++;
+  }
 }
 
 /* Two-state in-process check.  Coexisting states guarantee distinct
@@ -307,7 +330,7 @@ static void test_sanity_dense_array(void) {
   check_three_subproc("pairs(dense array)", CAT_SANITY,
     "local t = {10, 20, 30, 40, 50, 60, 70, 80} "
     "local o = {} "
-    "for k, v in pairs(t) do o[#o+1] = k..':'..v end "
+    "for k, v in pairs(t) do o[#o+1] = k..\":\"..v end "
     "io.write(table.concat(o, \",\"))");
 }
 
@@ -327,7 +350,7 @@ static void test_sanity_boolean_keys(void) {
   check_three_subproc("pairs(boolean keys)", CAT_SANITY,
     "local t = { [true]=\"T\", [false]=\"F\" } "
     "local o = {} "
-    "for k, v in pairs(t) do o[#o+1] = tostring(k)..':'..v end "
+    "for k, v in pairs(t) do o[#o+1] = tostring(k)..\":\"..v end "
     "io.write(table.concat(o, \",\"))");
 }
 
@@ -395,6 +418,7 @@ static void test_env_os_clock_progresses(void) {
   printf("    observed: %s\n", r ? r : "(null)");
   ok = (r && strcmp(r, "advanced") == 0);
   printf("  %s: os.clock() advances [env-leak]\n", ok ? "PASS" : "FAIL");
+  if (!ok) g_failures++;
   free(r);
   lua_close(L);
 }
@@ -457,6 +481,10 @@ int main(void) {
   test_env_os_clock_progresses();
   test_env_os_time_real();
 
-  printf("\n=== Done ===\n");
+  if (g_failures) {
+    printf("\n=== Done: %d FAILURE(S) ===\n", g_failures);
+    return 1;
+  }
+  printf("\n=== Done: all checks passed ===\n");
   return 0;
 }
