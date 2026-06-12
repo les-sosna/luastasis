@@ -1286,19 +1286,31 @@ static TValue ds_read_tv(DeserState *d) {
     /* The value tag must agree with the actual type of the referenced object
     ** (the Pass-1 ground truth): a forged tag would otherwise make the VM read
     ** the object as another type -- type confusion one level below the id
-    ** validation. */
-    if (o && ctb(o->tt) != tag) {
+    ** validation. Compare base types (novariant), not the exact tag: a string's
+    ** short/long variant is re-derived from its length by luaS_newlstr on load
+    ** and may differ from the source's (a <= LUAI_MAXSHORTLEN external string is
+    ** saved as VLNGSTR but reloads as VSHRSTR), so the exact variant is taken
+    ** from the loaded object below rather than trusted from the stream -- which
+    ** also self-corrects a forged variant within the correct base type. */
+    if (o && novariant(o->tt) != novariant(tag)) {
       des_fail(d, "value tag 0x%02x does not match object id %u (type tag "
                "0x%02x)", (unsigned)tag, (unsigned)id, (unsigned)ctb(o->tt));
       o = NULL;
     }
+    if (o) v.tt_ = ctb(o->tt);  /* adopt the loaded object's real variant */
     v.value_.gc = o;
     if (!o) setnilvalue(&v);
   }
-  else if (!ttisnil(&v) && !ttisboolean(&v)) {
-    /* Unknown tag byte (including TV_DEADKEY, which is valid only in a table
-    ** node key position and is decoded by fill_table directly): a TValue with
-    ** an arbitrary tag must never enter the state -- type confusion. */
+  else if (tag != TV_NIL && tag != TV_FALSE && tag != TV_TRUE) {
+    /* Only the exact scalar wire tags are valid in a value position. The
+    ** ttisnil/ttisboolean type-class macros mask off the variant, so a plain
+    ** "is it nil/boolean?" test would also admit forged variants whose
+    ** novariant is nil/boolean -- LUA_VEMPTY (0x10), LUA_VABSTKEY (0x20),
+    ** bogus boolean variants (0x21/0x31), TV_DEADKEY (0x0B) -- and let a
+    ** non-value TValue reach a stack slot, proto constant, upvalue, or array
+    ** entry (type confusion / debug-assert). Match the exact bytes instead.
+    ** TV_EMPTY appears only as a table node's absent value and is decoded by
+    ** fill_table directly; TV_DEADKEY only as a node key, likewise. */
     des_fail(d, "invalid value tag 0x%02x in stream", (unsigned)tag);
     setnilvalue(&v);
   }
@@ -1503,15 +1515,29 @@ static void fill_table(DeserState *d, Table *t) {
     Node *n;
     uint32_t kid = 0;
     int dead = 0;
-    if (rb->pos < rb->size && rb->data[rb->pos] == TV_DEADKEY) {
+    uint8_t ktag = (rb->pos < rb->size) ? rb->data[rb->pos] : 0xFF;
+    /* Empty-slot marker is exactly TV_NIL (one byte). Detect it by raw tag,
+    ** the same predicate the Pass-1 size scan uses, so the two passes consume
+    ** identical bytes for every slot; a peek-and-mask test would diverge from
+    ** Pass-1 on a forged nil-variant key byte and desync the record cursor. */
+    if (ktag == TV_NIL) { (void)rb_u8(rb); continue; }
+    if (ktag == TV_DEADKEY) {
       (void)rb_u8(rb);
       kid = rb_u32(rb);
       dead = 1;
     } else {
       key = ds_read_tv(d);
-      if (ttisnil(&key)) continue;  /* empty slot — leave as initialized */
     }
-    val = ds_read_tv(d);
+    /* Node value: a real value, or the empty marker (TV_NIL/TV_EMPTY) that a
+    ** dead or value-cleared node carries. ds_read_tv rejects TV_EMPTY (it is
+    ** never a value elsewhere), so read the empty markers by raw tag here. */
+    if (rb->pos < rb->size &&
+        (rb->data[rb->pos] == TV_NIL || rb->data[rb->pos] == TV_EMPTY)) {
+      memset(&val, 0, sizeof val);
+      val.tt_ = rb_u8(rb);
+    } else {
+      val = ds_read_tv(d);
+    }
     nxt = rb_i32(rb);
     /* A nil-type node value must be one of the two empty variants Lua stores in
     ** nodes (LUA_VNIL / LUA_VEMPTY); any other nil variant is a forged tag. */
@@ -1779,8 +1805,16 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   d.num_objects = 0;
   while (d.rb.pos < objects_end) {
     uint32_t dsz;
+    uint8_t tc;
     if (!rb_ok(&d.rb, 1 + 8 + 4)) goto fail_pre;
-    d.obj_types[d.num_objects]   = rb_u8(&d.rb);
+    tc = rb_u8(&d.rb);
+    /* Reject unknown type codes here, the one point every record's type is
+    ** first read. Pass 1's creation switch has a no-op default, so an
+    ** out-of-range code would otherwise leave id_to_ptr[id] NULL yet let the
+    ** load continue; a RESOLVE_ANY reference then resolves to NULL silently
+    ** (injecting nil for a referenced object) instead of failing the load. */
+    if (tc < OBJ_STRING || tc > OBJ_USERDATA) goto fail_pre;
+    d.obj_types[d.num_objects]   = tc;
     d.obj_objids[d.num_objects]  = rb_u64(&d.rb);
     dsz = rb_u32(&d.rb);
     d.obj_offsets[d.num_objects] = d.rb.pos;
@@ -1814,8 +1848,22 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   d.id_to_ptr = (void **)calloc(d.num_objects + 1, sizeof(void *));
   if (!d.id_to_ptr) goto fail_L;
 
-  if (main_thread_id && main_thread_id <= d.num_objects)
+  /* main_thread_id is stream-controlled. The alias installed here makes every
+  ** later reference to it resolve to the real main thread, and Pass 1 skips
+  ** creating an object for it; both dispatch on d.obj_types, so a forged id
+  ** whose record is not a thread would leave the main lua_State aliased under
+  ** that type and the matching fill pass would write through it as that type
+  ** (e.g. fill_proto's memcpy into p->code) -- the same type confusion
+  ** resolve_obj_id guards against for every other id. Validate the type here. */
+  if (main_thread_id) {
+    if (main_thread_id > d.num_objects ||
+        d.obj_types[main_thread_id - 1] != OBJ_THREAD) {
+      fprintf(stderr, "lstasis_load: main thread id %u is not a thread\n",
+              (unsigned)main_thread_id);
+      goto fail_L;
+    }
     d.id_to_ptr[main_thread_id] = mainthread(G(L));
+  }
 
   /* ----------------------------------------------------------------
   ** Pass 1: create blank objects

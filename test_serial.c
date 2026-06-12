@@ -1280,7 +1280,7 @@ static void test_deadkey_byte_stable(void) {
   lua_getglobal(L2, "t");
   lua_getfield(L2, -1, "live");
   CHECK(lua_tointeger(L2, -1) == 1, "live key intact after load",
-        "got %s", lua_tostring(L2, -1));
+        "got %s", lua_isnil(L2, -1) ? "nil" : lua_tostring(L2, -1));
   lua_pop(L2, 1);
   lua_getfield(L2, -1, "dead");
   CHECK(lua_isnil(L2, -1), "dead key absent after load",
