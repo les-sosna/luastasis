@@ -309,17 +309,22 @@ static void test_pairs_cfunction_keys(void) {
   ** key->value labelling is deterministic; only the iteration *order* of the
   ** function keys carries the (non-)determinism under test.
   **
-  ** math.random/math.randomseed are skipped: they are registered as C
-  ** closures with a shared upvalue (the PRNG state, see lmathlib.c), so they
-  ** hash via the GCObject path rather than as light C functions — outside
-  ** this probe's scope.  Dropping them keeps 84 keys (still modulus 127). */
+  ** Only light C functions qualify: a light C function is a C function with
+  ** zero upvalues (lua_pushcclosure with nup==0), so it is filtered in via
+  ** select("#", debug.getupvalue(v, 1)) == 0 -- the arity is 0 exactly when
+  ** the function has no upvalues, independent of any upvalue's value.  This
+  ** excludes C closures such as math.random/math.randomseed (a shared
+  ** PRNG-state upvalue, see lmathlib.c) which hash via the GCObject path
+  ** rather than as light functions.  84 keys remain (still modulus 127). */
   check_n_subproc("pairs(cfunction keys)", CAT_NONDET,
     "local t, n = {}, 0 "
-    "local skip = { random = true, randomseed = true } "
     "for _, lib in ipairs({ string, table, math, coroutine, os, io }) do "
     "  local names = {} "
     "  for k, v in pairs(lib) do "
-    "    if type(v) == \"function\" and not skip[k] then names[#names+1] = k end "
+    "    if type(v) == \"function\" "
+    "       and select(\"#\", debug.getupvalue(v, 1)) == 0 then "
+    "      names[#names+1] = k "
+    "    end "
     "  end "
     "  table.sort(names) "
     "  for _, k in ipairs(names) do n = n + 1; t[lib[k]] = n end "
