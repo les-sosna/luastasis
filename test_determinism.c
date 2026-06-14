@@ -28,6 +28,7 @@
 ** once the Lua core flag exists:  make MYCFLAGS=-DLUASTASIS_DETERMINISTIC=1
 */
 
+#include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -181,26 +182,34 @@ static void check_two_states(const char *name, category_t cat,
   free(a); free(b);
 }
 
-/* Three-subprocess check.  Seed-driven tests are probabilistic — two
-** processes can collide on bucket order by chance.  Three samples drop
-** the false-collision rate to negligible: "non-deterministic" = ANY
-** pair differs; "deterministic" = ALL three are identical. */
+/* N-subprocess check.  Address/seed-driven tests are probabilistic — two
+** processes can collide on bucket order by chance.  Taking several samples
+** drops the false-collision rate: "non-deterministic" = outputs are NOT all
+** identical; "deterministic" = every sample is identical.  How many samples
+** are needed depends on the entropy of the source — see the caller notes.
+** Runs are labelled A, B, C, ... so callers must keep n <= 26. */
+static void check_n_subproc(const char *name, category_t cat,
+                            const char *code, int n) {
+  char *out[26];   /* one slot per run label A..Z */
+  int i, differ = 0;
+  assert(n >= 1 && n <= (int)(sizeof(out) / sizeof(out[0])));
+  for (i = 0; i < n; i++) {
+    out[i] = run_subproc(code);
+    printf("    run %c: %s\n", (char)('A' + i), out[i] ? out[i] : "(null)");
+  }
+  for (i = 1; i < n; i++) {
+    if (!out[0] || !out[i] || strcmp(out[0], out[i]) != 0) { differ = 1; break; }
+  }
+  report(name, cat, differ);
+  for (i = 0; i < n; i++) free(out[i]);
+}
+
+/* Three samples are plenty for the seed-driven string/heap probes (a per-state
+** hash seed gives ample entropy, so a chance collision across three processes
+** is negligible). */
 static void check_three_subproc(const char *name, category_t cat,
                                 const char *code) {
-  char *a, *b, *c;
-  int differ_ab, differ_ac, differ_bc, differ;
-  a = run_subproc(code);
-  b = run_subproc(code);
-  c = run_subproc(code);
-  printf("    run A: %s\n", a ? a : "(null)");
-  printf("    run B: %s\n", b ? b : "(null)");
-  printf("    run C: %s\n", c ? c : "(null)");
-  differ_ab = (a && b && strcmp(a, b) != 0);
-  differ_ac = (a && c && strcmp(a, c) != 0);
-  differ_bc = (b && c && strcmp(b, c) != 0);
-  differ = differ_ab || differ_ac || differ_bc;
-  report(name, cat, differ);
-  free(a); free(b); free(c);
+  check_n_subproc(name, cat, code, 3);
 }
 
 /* ======================================================================
@@ -272,19 +281,57 @@ static void test_pairs_table_keys(void) {
     "io.write(table.concat(o, \",\"))");
 }
 
+/* Light-C-function keys carry far less entropy than seeded string keys, so
+** this probe takes more than the default three samples (see notes below). */
+enum { CFUNC_KEY_SAMPLES = 8 };
+
 static void test_pairs_cfunction_keys(void) {
   printf("\n== pairs() on C-function keys ==\n");
-  /* In vanilla Lua, lua_pushcfunction with no upvalues stores a light C
-  ** function whose address varies with ASLR — using one as a table key
-  ** gives ASLR-dependent hash positions.  In deterministic mode every
-  ** C function is allocated as a CClosure with a stable objid, so the
-  ** iteration order is reproducible across processes. */
-  check_three_subproc("pairs(cfunction keys)", CAT_NONDET,
-    "local t = { [print]=1, [tostring]=2, [tonumber]=3, [pairs]=4, "
-    "            [next]=5, [type]=6, [error]=7, [assert]=8 } "
+  /* In vanilla Lua, lua_pushcfunction with no upvalues stores a *light* C
+  ** function.  Its hash position is point2uint(addr) % ((sizenode-1)|1) and
+  ** uses NO per-state seed.  Every stdlib C function lives at a fixed offset
+  ** in the executable's .text, and ASLR only shifts the whole segment by a
+  ** common page-aligned base.  With a small table the entire iteration order
+  ** therefore collapses to a function of (base % 7) — at most a handful of
+  ** distinct outcomes, which a few subprocesses collide on a few percent of
+  ** the time (a flaky false FAIL).
+  **
+  ** Two independent hardenings make the probe reliable:
+  **   (1) key the table on ~80 distinct light C functions, so the hash part
+  **       is large (sizenode 128 => modulus 127) and the order depends on the
+  **       pointers' full low bits rather than just (addr % 7); and
+  **   (2) take more than three samples.
+  ** In deterministic mode every C function is a CClosure with a stable objid,
+  ** so the order stays reproducible across processes regardless of key count
+  ** or sample count.
+  **
+  ** Function names are sorted before each marker value is assigned, so the
+  ** key->value labelling is deterministic; only the iteration *order* of the
+  ** function keys carries the (non-)determinism under test.
+  **
+  ** Only light C functions qualify: a light C function is a C function with
+  ** zero upvalues (lua_pushcclosure with nup==0), so it is filtered in via
+  ** select("#", debug.getupvalue(v, 1)) == 0 -- the arity is 0 exactly when
+  ** the function has no upvalues, independent of any upvalue's value.  This
+  ** excludes C closures such as math.random/math.randomseed (a shared
+  ** PRNG-state upvalue, see lmathlib.c) which hash via the GCObject path
+  ** rather than as light functions.  84 keys remain (still modulus 127). */
+  check_n_subproc("pairs(cfunction keys)", CAT_NONDET,
+    "local t, n = {}, 0 "
+    "for _, lib in ipairs({ string, table, math, coroutine, os, io }) do "
+    "  local names = {} "
+    "  for k, v in pairs(lib) do "
+    "    if type(v) == \"function\" "
+    "       and select(\"#\", debug.getupvalue(v, 1)) == 0 then "
+    "      names[#names+1] = k "
+    "    end "
+    "  end "
+    "  table.sort(names) "
+    "  for _, k in ipairs(names) do n = n + 1; t[lib[k]] = n end "
+    "end "
     "local o = {} "
     "for _, v in pairs(t) do o[#o+1] = tostring(v) end "
-    "io.write(table.concat(o, \",\"))");
+    "io.write(table.concat(o, \",\"))", CFUNC_KEY_SAMPLES);
 }
 
 static void test_pairs_mixed_keys(void) {
