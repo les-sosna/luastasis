@@ -87,13 +87,13 @@ endif
 # Note that Linux/Posix options are not compatible with C89
 # (For 32-bit, add option "-m32" to MYCFLAGS and MYLDFLAGS.)
 MYCFLAGS= $(LOCAL) -std=c99 -DLUA_USE_LINUX $(LSTASIS_FLAGS)
-MYLDFLAGS= -Wl,-E
+MYLDFLAGS= -Wl,-E -pie
 MYLIBS= -ldl
 
 
 CC= gcc
 # (Optionally we can use -march=native -mno-avx512f.)
-CFLAGS= -Wall -O2 $(MYCFLAGS) -fno-stack-protector -fno-common
+CFLAGS= -Wall -O2 $(MYCFLAGS) -fno-stack-protector -fno-common -fpie
 AR= ar rc
 RANLIB= ranlib
 RM= rm -f
