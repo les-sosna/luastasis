@@ -19,13 +19,22 @@ LuaStasis is a fork of Lua 5.5 that adds first-class support for snapshotting an
 int lstasis_save(lua_State *L,
                 const lstasis_Lib *libs,   /* registered C libraries */
                 unsigned char **out_buf,
-                size_t        *out_size);
+                size_t        *out_size,
+                char          *errbuf,     /* diagnostic on failure; NULL to discard */
+                size_t         errbuf_size);
 
 /* Restore a state from a snapshot buffer. */
 lua_State *lstasis_load(const unsigned char *buf,
                        size_t               size,
-                       const lstasis_Lib    *libs);
+                       const lstasis_Lib    *libs,
+                       char                *errbuf,      /* diagnostic on failure; NULL to discard */
+                       size_t               errbuf_size);
 ```
+
+On failure (`lstasis_save` returns `-1`, `lstasis_load` returns `NULL`), a
+NUL-terminated, possibly truncated human-readable reason is written to `errbuf`
+when `errbuf != NULL && errbuf_size > 0`. Pass `NULL`/`0` to discard it. `errbuf`
+is written only on the error path, never on success.
 
 `libs` is a NULL-terminated array that tells the serializer how to name and re-resolve C functions across save/load boundaries:
 
@@ -41,10 +50,14 @@ static const lstasis_Lib my_libs[] = {
 /* Save */
 unsigned char *buf = NULL;
 size_t sz = 0;
-lstasis_save(L, my_libs, &buf, &sz);
+char err[256] = "";
+if (lstasis_save(L, my_libs, &buf, &sz, err, sizeof err) != 0)
+    fprintf(stderr, "save failed: %s\n", err);
 
 /* Restore on the same or a different process */
-lua_State *L2 = lstasis_load(buf, sz, my_libs);
+lua_State *L2 = lstasis_load(buf, sz, my_libs, err, sizeof err);
+if (!L2)
+    fprintf(stderr, "load failed: %s\n", err);
 free(buf);
 ```
 
