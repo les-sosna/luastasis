@@ -28,6 +28,7 @@
 ** once the Lua core flag exists:  make MYCFLAGS=-DLUASTASIS_DETERMINISTIC=1
 */
 
+#include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -191,6 +192,7 @@ static void check_n_subproc(const char *name, category_t cat,
                             const char *code, int n) {
   char *out[26];   /* one slot per run label A..Z */
   int i, differ = 0;
+  assert(n >= 1 && n <= (int)(sizeof(out) / sizeof(out[0])));
   for (i = 0; i < n; i++) {
     out[i] = run_subproc(code);
     printf("    run %c: %s\n", (char)('A' + i), out[i] ? out[i] : "(null)");
@@ -305,13 +307,19 @@ static void test_pairs_cfunction_keys(void) {
   **
   ** Function names are sorted before each marker value is assigned, so the
   ** key->value labelling is deterministic; only the iteration *order* of the
-  ** function keys carries the (non-)determinism under test. */
+  ** function keys carries the (non-)determinism under test.
+  **
+  ** math.random/math.randomseed are skipped: they are registered as C
+  ** closures with a shared upvalue (the PRNG state, see lmathlib.c), so they
+  ** hash via the GCObject path rather than as light C functions — outside
+  ** this probe's scope.  Dropping them keeps 84 keys (still modulus 127). */
   check_n_subproc("pairs(cfunction keys)", CAT_NONDET,
     "local t, n = {}, 0 "
+    "local skip = { random = true, randomseed = true } "
     "for _, lib in ipairs({ string, table, math, coroutine, os, io }) do "
     "  local names = {} "
     "  for k, v in pairs(lib) do "
-    "    if type(v) == \"function\" then names[#names+1] = k end "
+    "    if type(v) == \"function\" and not skip[k] then names[#names+1] = k end "
     "  end "
     "  table.sort(names) "
     "  for _, k in ipairs(names) do n = n + 1; t[lib[k]] = n end "
