@@ -521,7 +521,8 @@ typedef struct {
   uint32_t   cap_objs;
   CFuncMap   cfm;       /* C function pointer → name */
   int        error;
-  char       errmsg[256];
+  char      *errbuf;       /* caller-supplied; NULL means "drop the message" */
+  size_t     errbuf_size;
 } SerState;
 
 /* Latch a save error: the first failure wins and aborts the save; later
@@ -533,9 +534,11 @@ static void ser_fail(SerState *s, const char *fmt, ...) {
   va_list ap;
   if (s->error) return;
   s->error = 1;
-  va_start(ap, fmt);
-  vsnprintf(s->errmsg, sizeof(s->errmsg), fmt, ap);
-  va_end(ap);
+  if (s->errbuf && s->errbuf_size) {
+    va_start(ap, fmt);
+    vsnprintf(s->errbuf, s->errbuf_size, fmt, ap);
+    va_end(ap);
+  }
 }
 
 static void ser_init(SerState *s) {
@@ -546,7 +549,8 @@ static void ser_init(SerState *s) {
   s->ordered  = (GCObject **)malloc(s->cap_objs * sizeof(GCObject *));
   cfmap_init(&s->cfm);
   s->error    = 0;
-  s->errmsg[0] = '\0';
+  s->errbuf      = NULL;
+  s->errbuf_size = 0;
 }
 static void ser_free(SerState *s) {
   objmap_free(&s->map);
@@ -1140,16 +1144,18 @@ static void write_obj(WBuf *b, SerState *s, GCObject *o) {
 ** Public save
 ** --------------------------------------------------------------------- */
 int lstasis_save(lua_State *L, const lstasis_Lib *libs,
-                unsigned char **out_buf, size_t *out_size) {
+                unsigned char **out_buf, size_t *out_size,
+                char *errbuf, size_t errbuf_size) {
   SerState s;
   WBuf b;
   ser_init(&s);
+  s.errbuf      = errbuf;       /* ser_fail writes the reason straight here */
+  s.errbuf_size = errbuf_size;
   build_cfmap_for_save(&s.cfm, libs);
   discover_all(&s, L);
   if (s.error) {
     /* Non-serializable data (light or non-__persist userdata) is reachable:
     ** reject before writing any bytes. */
-    fprintf(stderr, "lstasis_save: %s\n", s.errmsg);
     ser_free(&s);
     return -1;
   }
@@ -1183,7 +1189,6 @@ int lstasis_save(lua_State *L, const lstasis_Lib *libs,
     wb_u32(&b, G(L)->mt[i] ? ser_get_id(&s, obj2gco(G(L)->mt[i])) : ID_NULL);
 
   if (s.error) {
-    fprintf(stderr, "lstasis_save: %s\n", s.errmsg);
     free(b.data);
     ser_free(&s);
     return -1;
@@ -1211,7 +1216,8 @@ typedef struct {
   uint32_t    main_thread_id;
   CFuncRevMap cfrev;       /* "lib.func" → lua_CFunction pointer */
   int         error;
-  char        errmsg[256];
+  char       *errbuf;      /* caller-supplied; NULL means "drop the message" */
+  size_t      errbuf_size;
 } DeserState;
 
 /* Latch a load error: the first failure wins and aborts the load; later
@@ -1223,9 +1229,11 @@ static void des_fail(DeserState *d, const char *fmt, ...) {
   va_list ap;
   if (d->error) return;
   d->error = 1;
-  va_start(ap, fmt);
-  vsnprintf(d->errmsg, sizeof(d->errmsg), fmt, ap);
-  va_end(ap);
+  if (d->errbuf && d->errbuf_size) {
+    va_start(ap, fmt);
+    vsnprintf(d->errbuf, d->errbuf_size, fmt, ap);
+    va_end(ap);
+  }
 }
 
 /* Expected-type arguments for resolve_obj_id beyond the exact OBJ_* codes
@@ -1761,7 +1769,8 @@ static void fill_userdata(DeserState *d, Udata *u) {
 ** lstasis_load
 ** --------------------------------------------------------------------- */
 lua_State *lstasis_load(const unsigned char *buf, size_t size,
-                       const lstasis_Lib *libs) {
+                       const lstasis_Lib *libs,
+                       char *errbuf, size_t errbuf_size) {
   size_t header_size;
   size_t footer_size;
   size_t max_objects;
@@ -1777,6 +1786,8 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   d.rb.data = buf;
   d.rb.pos  = 0;
   d.rb.size = size;
+  d.errbuf      = errbuf;       /* des_fail writes the reason straight here */
+  d.errbuf_size = errbuf_size;
   cfrev_init(&d.cfrev);
 
   /* Format: [next_seq:u64][seed:u32] {objects...} [registry:u32 main:u32
@@ -1784,10 +1795,10 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   ** object section is everything between the header and (size - footer). */
   header_size = 8 + 4;  /* next_seq + seed */
   footer_size = (size_t)(4 + 4 + LUA_NUMTYPES * 4);
-  if (size < header_size + footer_size) return NULL;
+  if (size < header_size + footer_size) goto fail_pre;
   objects_end = size - footer_size;
 
-  if (!rb_ok(&d.rb, header_size)) return NULL;
+  if (!rb_ok(&d.rb, header_size)) goto fail_pre;
   saved_next_seq = rb_u64(&d.rb);
   (void)saved_next_seq;  /* used only in deterministic mode below */
   saved_seed = rb_u32(&d.rb);
@@ -1800,7 +1811,10 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   d.obj_types   = (uint8_t  *)malloc(max_objects);
   d.obj_objids  = (uint64_t *)malloc(max_objects * sizeof(uint64_t));
   d.obj_offsets = (size_t   *)malloc(max_objects * sizeof(size_t));
-  if (!d.obj_types || !d.obj_objids || !d.obj_offsets) goto fail_pre;
+  if (!d.obj_types || !d.obj_objids || !d.obj_offsets) {
+    des_fail(&d, "out of memory allocating object index");
+    goto fail_pre;
+  }
 
   d.num_objects = 0;
   while (d.rb.pos < objects_end) {
@@ -1835,7 +1849,10 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   ** Go through lua_newstate directly — luaL_newstate would force a
   ** fresh seed (random in vanilla mode, zero in deterministic). */
   L = lua_newstate(luaL_alloc, NULL, (unsigned)saved_seed);
-  if (!L) goto fail_pre;
+  if (!L) {
+    des_fail(&d, "out of memory creating the loaded state");
+    goto fail_pre;
+  }
   d.L              = L;
   d.main_thread_id = main_thread_id;
 
@@ -1846,7 +1863,10 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   build_cfmap_for_load(&d.cfrev, libs);
 
   d.id_to_ptr = (void **)calloc(d.num_objects + 1, sizeof(void *));
-  if (!d.id_to_ptr) goto fail_L;
+  if (!d.id_to_ptr) {
+    des_fail(&d, "out of memory allocating the id table");
+    goto fail_L;
+  }
 
   /* main_thread_id is stream-controlled. The alias installed here makes every
   ** later reference to it resolve to the real main thread, and Pass 1 skips
@@ -1858,8 +1878,8 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
   if (main_thread_id) {
     if (main_thread_id > d.num_objects ||
         d.obj_types[main_thread_id - 1] != OBJ_THREAD) {
-      fprintf(stderr, "lstasis_load: main thread id %u is not a thread\n",
-              (unsigned)main_thread_id);
+      des_fail(&d, "main thread id %u is not a thread",
+               (unsigned)main_thread_id);
       goto fail_L;
     }
     d.id_to_ptr[main_thread_id] = mainthread(G(L));
@@ -2067,10 +2087,8 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
     if (d.error) break;
   }
 
-  if (d.error) {
-    fprintf(stderr, "lstasis_load: %s\n", d.errmsg);
+  if (d.error)
     goto fail_L;
-  }
 
   /* ----------------------------------------------------------------
   ** Pass 2h: repair tag-method caches and register __gc finalizers.
@@ -2117,10 +2135,8 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
     for (int i = 0; i < LUA_NUMTYPES; i++)
       mts[i] = (Table *)resolve_obj_id(&d, mt_ids[i], OBJ_TABLE,
                                        "type metatable");
-    if (d.error) {
-      fprintf(stderr, "lstasis_load: %s\n", d.errmsg);
+    if (d.error)
       goto fail_L;
-    }
     if (reg)
       sethvalue(L, &G(L)->l_registry, reg);
     for (int i = 0; i < LUA_NUMTYPES; i++)
@@ -2157,6 +2173,11 @@ lua_State *lstasis_load(const unsigned char *buf, size_t size,
 fail_L:
   lua_close(L);
 fail_pre:
+  /* A des_fail along the way already wrote the real reason into errbuf; the
+  ** structural truncation/format checks bail silently, so supply a generic
+  ** message for them. */
+  if (!d.error && errbuf && errbuf_size)
+    snprintf(errbuf, errbuf_size, "truncated or malformed stream");
   cfrev_free(&d.cfrev);
   free(d.obj_types);
   free(d.obj_objids);

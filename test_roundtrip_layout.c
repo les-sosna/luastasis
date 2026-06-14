@@ -88,6 +88,7 @@ int main(void) {
   size_t n1 = 0;
   size_t n2 = 0;
   int ok;
+  char err[256] = "";
 
   printf("=== LuaStasis roundtrip layout test ===\n");
 
@@ -95,16 +96,16 @@ int main(void) {
   if (!L) { fprintf(stderr, "newstate failed\n"); return 2; }
   populate(L);
 
-  if (lstasis_save(L, NULL, &s1, &n1) != 0) {
-    fprintf(stderr, "first save failed\n");
+  if (lstasis_save(L, NULL, &s1, &n1, err, sizeof err) != 0) {
+    fprintf(stderr, "first save failed: %s\n", err);
     lua_close(L); return 2;
   }
 
-  L2 = lstasis_load(s1, n1, NULL);
-  if (!L2) { fprintf(stderr, "load failed\n"); free(s1); lua_close(L); return 2; }
+  L2 = lstasis_load(s1, n1, NULL, err, sizeof err);
+  if (!L2) { fprintf(stderr, "load failed: %s\n", err); free(s1); lua_close(L); return 2; }
 
-  if (lstasis_save(L2, NULL, &s2, &n2) != 0) {
-    fprintf(stderr, "second save failed\n");
+  if (lstasis_save(L2, NULL, &s2, &n2, err, sizeof err) != 0) {
+    fprintf(stderr, "second save failed: %s\n", err);
     free(s1); lua_close(L2); lua_close(L); return 2;
   }
 

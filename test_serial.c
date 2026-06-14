@@ -58,18 +58,21 @@ static lua_State *save_reload(lua_State *L, const char *setup_code,
   size_t sz;
   unsigned char *buf;
   lua_State *L2;
+  char err[256] = "";
   if (setup_code) {
     int r = run(L, setup_code);
     if (r != LUA_OK) return NULL;
   }
   buf = NULL;
   sz = 0;
-  if (lstasis_save(L, libs, &buf, &sz) != 0) {
-    fprintf(stderr, "save failed\n");
+  if (lstasis_save(L, libs, &buf, &sz, err, sizeof err) != 0) {
+    fprintf(stderr, "save failed: %s\n", err);
     return NULL;
   }
-  L2 = lstasis_load(buf, sz, libs);
+  L2 = lstasis_load(buf, sz, libs, err, sizeof err);
   free(buf);
+  if (!L2)
+    fprintf(stderr, "load failed: %s\n", err);
   return L2;
 }
 
@@ -512,6 +515,7 @@ static void test_coroutine_usercont_rejected(void) {
   size_t sz = 0;
   unsigned char *buf = NULL;
   lua_State *L;
+  char err[256] = "";
   printf("== test_coroutine_usercont_rejected ==\n");
   L = new_state();
   luaL_requiref(L, "usertest", luaopen_usertest, 1);
@@ -524,8 +528,9 @@ static void test_coroutine_usercont_rejected(void) {
   );
   if (r != LUA_OK) { FAIL("setup", "lua error"); lua_close(L); return; }
 
-  rc = lstasis_save(L, user_libs, &buf, &sz);
+  rc = lstasis_save(L, user_libs, &buf, &sz, err, sizeof err);
   CHECK(rc != 0, "save rejects coroutine suspended in a user C continuation", "rc=%d", rc);
+  if (rc != 0) printf("    reason: %s\n", err);
   free(buf);
   lua_close(L);
 }
@@ -943,6 +948,7 @@ static void test_save_preserves_state(void) {
   size_t sz;
   lua_State *L;
   unsigned char *buf;
+  char err[256] = "";
   printf("== test_save_preserves_state ==\n");
   L = new_state();
 
@@ -965,10 +971,11 @@ static void test_save_preserves_state(void) {
   /* Perform the save. */
   buf = NULL;
   sz = 0;
-  rc = lstasis_save(L, std_libs, &buf, &sz);
+  err[0] = '\0';
+  rc = lstasis_save(L, std_libs, &buf, &sz, err, sizeof err);
   free(buf);
 
-  CHECK(rc == 0, "save succeeds", "rc=%d", rc);
+  CHECK(rc == 0, "save succeeds", "rc=%d (%s)", rc, err);
 
   /* Sentinel must still be intact. */
   lua_getglobal(L, "my_sentinel");
@@ -1121,6 +1128,7 @@ static void test_userdata_non_persistable(void) {
   unsigned char *buf = NULL;
   size_t sz = 0;
   int rc;
+  char err[256] = "";
   printf("== test_userdata_non_persistable ==\n");
   L = new_state();
 
@@ -1128,7 +1136,8 @@ static void test_userdata_non_persistable(void) {
   lua_newuserdatauv(L, sizeof(int), 0);
   lua_setglobal(L, "plain_ud");
 
-  rc = lstasis_save(L, std_libs, &buf, &sz);
+  rc = lstasis_save(L, std_libs, &buf, &sz, err, sizeof err);
+  if (rc != 0) printf("    reason: %s\n", err);
   CHECK(rc != 0, "non-persistable userdata is rejected at save",
         "rc=%d (expected nonzero)", rc);
   free(buf);
@@ -1141,13 +1150,15 @@ static void test_light_userdata_rejected(void) {
   unsigned char *buf = NULL;
   size_t sz = 0;
   int rc;
+  char err[256] = "";
   printf("== test_light_userdata_rejected ==\n");
   L = new_state();
 
   lua_pushlightuserdata(L, (void *)L);
   lua_setglobal(L, "lud");
 
-  rc = lstasis_save(L, std_libs, &buf, &sz);
+  rc = lstasis_save(L, std_libs, &buf, &sz, err, sizeof err);
+  if (rc != 0) printf("    reason: %s\n", err);
   CHECK(rc != 0, "light userdata is rejected at save",
         "rc=%d (expected nonzero)", rc);
   free(buf);
@@ -1162,6 +1173,7 @@ static void test_userdata_uservalue_rejected(void) {
   int rc;
   lua_State *L;
   int *p;
+  char err[256] = "";
   printf("== test_userdata_uservalue_rejected ==\n");
   L = new_state();
   if (luaL_newmetatable(L, TEST_UD_TNAME)) {
@@ -1178,7 +1190,8 @@ static void test_userdata_uservalue_rejected(void) {
   lua_setglobal(L, "ud_uv");
 
   buf = NULL; sz = 0;
-  rc = lstasis_save(L, std_libs, &buf, &sz);
+  rc = lstasis_save(L, std_libs, &buf, &sz, err, sizeof err);
+  if (rc != 0) printf("    reason: %s\n", err);
   CHECK(rc != 0, "save rejects persistable userdata with user values",
         "rc=%d", rc);
   free(buf);
@@ -1207,18 +1220,19 @@ static lua_State *reload_check_bytes(lua_State *L, const char *check_name) {
   size_t n1 = 0;
   unsigned char *s1 = NULL;
   lua_State *L2;
-  if (lstasis_save(L, base_libs, &s1, &n1) != 0) {
-    FAIL("save1", "first save failed"); lua_close(L); return NULL;
+  char err[256] = "";
+  if (lstasis_save(L, base_libs, &s1, &n1, err, sizeof err) != 0) {
+    FAIL("save1", "first save failed: %s", err); lua_close(L); return NULL;
   }
-  L2 = lstasis_load(s1, n1, base_libs);
+  L2 = lstasis_load(s1, n1, base_libs, err, sizeof err);
   lua_close(L);
-  if (!L2) { FAIL("reload", "load returned NULL"); free(s1); return NULL; }
+  if (!L2) { FAIL("reload", "load returned NULL: %s", err); free(s1); return NULL; }
 #if LUASTASIS_DETERMINISTIC
   {
     size_t n2 = 0;
     unsigned char *s2 = NULL;
-    if (lstasis_save(L2, base_libs, &s2, &n2) != 0) {
-      FAIL("save2", "second save failed"); free(s1); lua_close(L2); return NULL;
+    if (lstasis_save(L2, base_libs, &s2, &n2, err, sizeof err) != 0) {
+      FAIL("save2", "second save failed: %s", err); free(s1); lua_close(L2); return NULL;
     }
     CHECK((n1 == n2) && (memcmp(s1, s2, n1) == 0), check_name,
           "n1=%zu n2=%zu", n1, n2);

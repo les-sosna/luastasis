@@ -148,11 +148,12 @@ static void check_snapshot(lua_State *L, const lstasis_Lib *libs,
   int rc;
   char *want;
   size_t want_len;
+  char err[256] = "";
 
   printf("== %s ==\n", test_name);
 
-  if (lstasis_save(L, libs, &buf, &sz) != 0) {
-    fprintf(stderr, "  FAIL: lstasis_save failed\n");
+  if (lstasis_save(L, libs, &buf, &sz, err, sizeof err) != 0) {
+    fprintf(stderr, "  FAIL: lstasis_save failed: %s\n", err);
     g_failures++;
     return;
   }

@@ -70,16 +70,26 @@ const lstasis_Kont *lstasis_builtin_konts(void);
 **
 ** On success, *out_buf points to the buffer (caller must free) and
 ** *out_size holds its length.  Returns 0 on success, -1 on error.
+**
+** On error, if errbuf != NULL && errbuf_size > 0, a NUL-terminated (possibly
+** truncated) human-readable diagnostic is written to errbuf; pass NULL/0 to
+** discard it.  errbuf is written only on the error return, never on success.
 */
 int lstasis_save(lua_State *L, const lstasis_Lib *libs,
-                 unsigned char **out_buf, size_t *out_size);
+                 unsigned char **out_buf, size_t *out_size,
+                 char *errbuf, size_t errbuf_size);
 
 /*
 ** Deserialize a buffer produced by lstasis_save.
 ** libs must match (or be a superset of) the libs used at save time.
 ** Returns a new, fully independent lua_State, or NULL on error.
+**
+** On error, if errbuf != NULL && errbuf_size > 0, a NUL-terminated (possibly
+** truncated) human-readable diagnostic is written to errbuf; pass NULL/0 to
+** discard it.  errbuf is written only on the error return, never on success.
 */
 lua_State *lstasis_load(const unsigned char *buf, size_t size,
-                        const lstasis_Lib *libs);
+                        const lstasis_Lib *libs,
+                        char *errbuf, size_t errbuf_size);
 
 #endif
